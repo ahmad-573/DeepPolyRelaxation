@@ -18,7 +18,37 @@ def analyze(
     :param true_label: True label of the input.
     :return: True if the network is verified, False otherwise.
     """
-    res = False
+    res = True
+    # go through all the layers
+    lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
+    upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
+
+    lower_bound = lower_bound.flatten().view(1, -1)
+    upper_bound = upper_bound.flatten().view(1, -1)
+
+    low_relational = lower_bound.clone()
+    up_relational = upper_bound.clone()
+
+    # print(lower_bound.shape, upper_bound.shape)
+    for layer in net:
+        print(layer.__class__.__name__)
+        if layer.__class__.__name__ == "Linear":
+            weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
+            weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
+
+            lower_bound_new = weights_positive @ lower_bound.T + weights_negative @ upper_bound.T + layer.bias.view(-1, 1)
+            upper_bound_new = weights_positive @ upper_bound.T + weights_negative @ lower_bound.T + layer.bias.view(-1, 1)
+
+            lower_bound = lower_bound_new.T
+            upper_bound = upper_bound_new.T
+    
+    # check if lower bound for true label is greater than upper bound for other labels
+    for i in range(10):
+        if i != true_label:
+            if lower_bound[0][true_label] <= upper_bound[0][i]:
+                res = False
+                break
+
 
     return res
 
