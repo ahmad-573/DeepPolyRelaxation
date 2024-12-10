@@ -1,1 +1,1 @@
-python code/verifier.py --net fc_linear --spec test_cases/fc_linear/img_mnist_0.082864.txt --test 1
+python code/verifier.py --net fc_linear --spec test_cases/fc_linear/img_mnist_0.077340.txt --test 1

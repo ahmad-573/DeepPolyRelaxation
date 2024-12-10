@@ -21,10 +21,6 @@ def analyze(
     # go through all the layers
     lower_bound_first = torch.maximum(inputs - eps, torch.zeros_like(inputs))
     upper_bound_first = torch.minimum(inputs + eps, torch.ones_like(inputs))
-    # lower_bound_first = inputs - eps
-    # upper_bound_first = inputs + eps
-    # lower_bound = torch.zeros(1, 2) - 1
-    # upper_bound = torch.zeros(1, 2) + 1
 
     lower_bound = lower_bound_first.flatten().view(1, -1)
     upper_bound = upper_bound_first.flatten().view(1, -1)
@@ -36,28 +32,11 @@ def analyze(
     for layer in net:
         print(layer.__class__.__name__)
         if layer.__class__.__name__ == "Linear":
-            weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
-            weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
-
-            lower_bound_new = weights_positive @ lower_bound.T + weights_negative @ upper_bound.T + layer.bias.view(-1, 1)
-            upper_bound_new = weights_positive @ upper_bound.T + weights_negative @ lower_bound.T + layer.bias.view(-1, 1)
-
-            lower_bound = lower_bound_new.T
-            upper_bound = upper_bound_new.T
-
-            # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
-            low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
-            up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
+            lower_bound, upper_bound, low_relational, up_relational = linear_forward(layer, lower_bound, upper_bound, low_relational, up_relational)
 
     low_rel, up_rel = back_substitute(low_relational, up_relational)
-    # print(low_rel, up_rel)
-    # print(lower_bound, upper_bound)
     lower_bound = torch.maximum(lower_bound, low_rel.T)
     upper_bound = torch.minimum(upper_bound, up_rel.T)
-
-    # print(lower_bound, upper_bound)
-
-    # print("HELOO", lower_bound, upper_bound)
 
     # check if lower bound for true label is greater than upper bound for other labels
     for i in range(10):
@@ -66,6 +45,19 @@ def analyze(
                 res = False
                 break
     return res
+
+def linear_forward(layer, lower_bound, upper_bound, low_rel, up_rel):
+    weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
+    weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
+
+    lower_bound_new = weights_positive @ lower_bound.T + weights_negative @ upper_bound.T + layer.bias.view(-1, 1)
+    upper_bound_new = weights_positive @ upper_bound.T + weights_negative @ lower_bound.T + layer.bias.view(-1, 1)
+
+    # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
+    low_rel.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
+    up_rel.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
+
+    return lower_bound_new.T, upper_bound_new.T, low_rel, up_rel
 
 def back_substitute(lower, upper):
     curr_lower = lower[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
