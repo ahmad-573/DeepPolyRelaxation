@@ -48,34 +48,6 @@ def analyze(
             # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
             low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
             up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
-    
-
-    # backsubstitute the bounds (only for linear at this point)
-    # coeffs = torch.eye(inputs.shape[-1] * inputs.shape[-2])
-    # for i, layer in enumerate(net):
-    #     if layer.__class__.__name__ == "Linear":
-    #         constant = torch.zeros(layer.weight.shape[1], 1)
-    #         break
-    
-    # for i, layer in enumerate(net):
-    #     if layer.__class__.__name__ == "Linear":
-    #         coeffs = layer.weight @ coeffs
-    #         constant = layer.weight @ constant + layer.bias.view(-1, 1) 
-    
-    # coeffs_positive = torch.maximum(coeffs, torch.zeros_like(coeffs))
-    # coeffs_negative = torch.minimum(coeffs, torch.zeros_like(coeffs))
-
-    # lower_bound_back = coeffs_positive @ lower_bound_first.flatten().view(-1, 1) + coeffs_negative @ upper_bound_first.flatten().view(-1, 1) + constant
-    # upper_bound_back = coeffs_positive @ upper_bound_first.flatten().view(-1, 1) + coeffs_negative @ lower_bound_first.flatten().view(-1, 1) + constant
-
-    # # print(lower_bound.shape, upper_bound.shape, lower_bound_back.shape, upper_bound_back.shape)
-    
-    # # print(lower_bound, upper_bound)
-
-    # lower_bound = torch.maximum(lower_bound, lower_bound_back.T)
-    # upper_bound = torch.minimum(upper_bound, upper_bound_back.T)
-
-    # print(lower_bound, upper_bound)
 
     low_rel, up_rel = back_substitute(low_relational, up_relational)
     # print(low_rel, up_rel)
@@ -93,8 +65,6 @@ def analyze(
             if lower_bound[0][true_label] <= upper_bound[0][i]:
                 res = False
                 break
-
-
     return res
 
 def back_substitute(lower, upper):
@@ -118,8 +88,6 @@ def back_substitute(lower, upper):
         append_this[0][-1] = 1
         prev_lower_append = torch.cat((prev_lower, append_this), dim=0)
         prev_upper_append = torch.cat((prev_upper, append_this), dim=0)
-
-        # print(prev_lower.shape, lower_positive.shape)
 
         curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
         curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
