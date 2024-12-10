@@ -169,7 +169,7 @@ def main():
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
-    if args.test == 0:
+    if args.test == 0: # simple test for sanity checks
         net = torch.nn.Sequential(
             torch.nn.Linear(2, 3),
             torch.nn.Linear(3, 1)
