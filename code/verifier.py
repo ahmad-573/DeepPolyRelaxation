@@ -6,7 +6,6 @@ from utils.loading import parse_spec
 
 DEVICE = "cpu"
 
-
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
@@ -30,8 +29,8 @@ def analyze(
     lower_bound = lower_bound_first.flatten().view(1, -1)
     upper_bound = upper_bound_first.flatten().view(1, -1)
 
-    low_relational = lower_bound.clone()
-    up_relational = upper_bound.clone()
+    low_relational = [lower_bound.clone()]
+    up_relational = [upper_bound.clone()]
 
     # print(lower_bound.shape, upper_bound.shape)
     for layer in net:
@@ -45,6 +44,10 @@ def analyze(
 
             lower_bound = lower_bound_new.T
             upper_bound = upper_bound_new.T
+
+            # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
+            low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
+            up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
     
 
     # backsubstitute the bounds (only for linear at this point)
