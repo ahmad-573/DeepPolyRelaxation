@@ -6,6 +6,98 @@ from utils.loading import parse_spec
 
 DEVICE = "cpu"
 
+class Verifier:
+    def __init__(self, net, inputs, eps, true_label):
+        self.net = net
+        self.inputs = inputs
+        self.eps = eps
+        self.true_label = true_label
+
+        self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
+        self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
+
+        self.low_relational = [self.lower_bound[0].flatten().view(1, -1).clone().T]
+        self.up_relational = [self.upper_bound[0].flatten().view(1, -1).clone().T]
+    
+    def linear_forward(self, layer):
+        weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
+        weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
+
+        lower_bound_new = weights_positive @ self.lower_bound.T + weights_negative @ self.upper_bound.T + layer.bias.view(-1, 1)
+        upper_bound_new = weights_positive @ self.upper_bound.T + weights_negative @ self.lower_bound.T + layer.bias.view(-1, 1)
+        self.lower_bound = lower_bound_new.T
+        self.upper_bound = upper_bound_new.T
+
+        # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
+        self.low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
+        self.up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
+    
+    def conv_forward(self, layer):
+        pass
+
+    def relu_forward(self, layer):
+        pass
+
+    def relu6_forward(self, layer):
+        pass
+    
+    def back_substitute(self):
+        curr_lower = self.low_relational[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+        curr_upper = self.up_relational[-1]
+        for i in range(len(self.low_relational)-2, -1, -1):
+            
+            prev_lower = self.low_relational[i] # shape: (L-1_layer_out_dim, L-1_layer_in_dim + 1)
+            prev_upper = self.up_relational[i]
+
+            # so curr_lower is basically a constraint of form x_i <= ax_i-1 + bx_i-2 + c (could be many terms) and we want to replace x_i-1 and x_i-2 with even previous constraints. so use similar >0 and <0 trick
+
+            lower_positive = torch.maximum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+            lower_negative = torch.minimum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+
+            upper_positive = torch.maximum(curr_upper, torch.zeros_like(curr_upper))
+            upper_negative = torch.minimum(curr_upper, torch.zeros_like(curr_upper))
+
+            # append a 0s row with last entry 1 to the prev_lower and prev_upper
+            append_this = torch.zeros(1, prev_lower.shape[1])
+            append_this[0][-1] = 1
+            prev_lower_append = torch.cat((prev_lower, append_this), dim=0)
+            prev_upper_append = torch.cat((prev_upper, append_this), dim=0)
+
+            curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
+            curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
+
+        self.lower_bound = torch.maximum(self.lower_bound, curr_lower.T)
+        self.upper_bound = torch.minimum(self.upper_bound, curr_upper.T)
+    
+    def check(self):
+        res = True
+        for i in range(10):
+            if i != self.true_label:
+                if self.lower_bound[0][self.true_label] <= self.upper_bound[0][i]:
+                    res = False
+                    break
+        return res
+    
+    def forward(self):
+        for layer in self.net:
+            print(layer.__class__.__name__)
+            if layer.__class__.__name__ == "Linear":
+                # flatten
+                self.lower_bound = self.lower_bound.flatten().view(1, -1)
+                self.upper_bound = self.upper_bound.flatten().view(1, -1)
+                self.linear_forward(layer)
+            
+            elif layer.__class__.__name__ == "Conv2d":
+                self.conv_forward(layer)
+            
+            elif layer.__class__.__name__ == "ReLU":
+                self.relu_forward(layer)
+            
+            elif layer.__class__.__name__ == "ReLU6":
+                self.relu6_forward(layer)
+
+
+
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
@@ -17,74 +109,11 @@ def analyze(
     :param true_label: True label of the input.
     :return: True if the network is verified, False otherwise.
     """
-    res = True
-    # go through all the layers
-    lower_bound_first = torch.maximum(inputs - eps, torch.zeros_like(inputs))
-    upper_bound_first = torch.minimum(inputs + eps, torch.ones_like(inputs))
+    verifier = Verifier(net, inputs, eps, true_label)
+    verifier.forward()
+    verifier.back_substitute()
+    return verifier.check()
 
-    lower_bound = lower_bound_first.flatten().view(1, -1)
-    upper_bound = upper_bound_first.flatten().view(1, -1)
-
-    low_relational = [lower_bound.clone().T]
-    up_relational = [upper_bound.clone().T]
-
-    # print(lower_bound.shape, upper_bound.shape)
-    for layer in net:
-        print(layer.__class__.__name__)
-        if layer.__class__.__name__ == "Linear":
-            lower_bound, upper_bound, low_relational, up_relational = linear_forward(layer, lower_bound, upper_bound, low_relational, up_relational)
-
-    low_rel, up_rel = back_substitute(low_relational, up_relational)
-    lower_bound = torch.maximum(lower_bound, low_rel.T)
-    upper_bound = torch.minimum(upper_bound, up_rel.T)
-
-    # check if lower bound for true label is greater than upper bound for other labels
-    for i in range(10):
-        if i != true_label:
-            if lower_bound[0][true_label] <= upper_bound[0][i]:
-                res = False
-                break
-    return res
-
-def linear_forward(layer, lower_bound, upper_bound, low_rel, up_rel):
-    weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
-    weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
-
-    lower_bound_new = weights_positive @ lower_bound.T + weights_negative @ upper_bound.T + layer.bias.view(-1, 1)
-    upper_bound_new = weights_positive @ upper_bound.T + weights_negative @ lower_bound.T + layer.bias.view(-1, 1)
-
-    # the relational constraint are same for lower and upper and they are basically the weights and bias (concat) of the layer
-    low_rel.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
-    up_rel.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
-
-    return lower_bound_new.T, upper_bound_new.T, low_rel, up_rel
-
-def back_substitute(lower, upper):
-    curr_lower = lower[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
-    curr_upper = upper[-1]
-    for i in range(len(lower)-2, -1, -1):
-        
-        prev_lower = lower[i] # shape: (L-1_layer_out_dim, L-1_layer_in_dim + 1)
-        prev_upper = upper[i]
-
-        # so curr_lower is basically a constraint of form x_i <= ax_i-1 + bx_i-2 + c (could be many terms) and we want to replace x_i-1 and x_i-2 with even previous constraints. so use similar >0 and <0 trick
-
-        lower_positive = torch.maximum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
-        lower_negative = torch.minimum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
-
-        upper_positive = torch.maximum(curr_upper, torch.zeros_like(curr_upper))
-        upper_negative = torch.minimum(curr_upper, torch.zeros_like(curr_upper))
-
-        # append a 0s row with last entry 1 to the prev_lower and prev_upper
-        append_this = torch.zeros(1, prev_lower.shape[1])
-        append_this[0][-1] = 1
-        prev_lower_append = torch.cat((prev_lower, append_this), dim=0)
-        prev_upper_append = torch.cat((prev_upper, append_this), dim=0)
-
-        curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
-        curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
-
-    return curr_lower, curr_upper
 def main():
     parser = argparse.ArgumentParser(
         description="Neural network verification using DeepPoly relaxation."
