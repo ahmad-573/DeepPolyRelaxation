@@ -6,18 +6,33 @@ from utils.loading import parse_spec
 
 DEVICE = "cpu"
 
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format='%(levelname)s(%(funcName)s:%(lineno)d) | %(message)s')
+
 class Verifier:
-    def __init__(self, net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int):
+    def __init__(self, net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int, num_class: int):
         self.net = net
         self.inputs = inputs
         self.eps = eps
         self.true_label = true_label
+        self.num_class = num_class
+
+        logging.debug(f"Inputs: {inputs}")
+        logging.debug(f"Eps: {eps}")
+        logging.debug(f"True label: {true_label}")
 
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
+        logging.debug(f"Lower bound: {self.lower_bound}")
+        logging.debug(f"Upper bound: {self.upper_bound}")
+
         self.low_relational = [self.lower_bound[0].flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound[0].flatten().view(1, -1).clone().T]
+
+        logging.debug(f"Low relational: {self.low_relational}")
+        logging.debug(f"Up relational: {self.up_relational}")
     
     def linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
@@ -70,19 +85,16 @@ class Verifier:
         self.upper_bound = torch.minimum(self.upper_bound, curr_upper.T)
     
     def check(self):
-        res = True
-        for i in range(10):
+        for i in range(self.num_class):
             if i != self.true_label:
                 if self.lower_bound[0][self.true_label] <= self.upper_bound[0][i]:
-                    res = False
-                    break
-        return res
+                    return False
+        return True
     
     def forward(self):
-        for layer in self.net:
-            print(layer.__class__.__name__)
+        for i, layer in enumerate(self.net):
+            logging.debug(f"Layer {i}: {layer.__class__.__name__}")
             if layer.__class__.__name__ == "Linear":
-                # flatten
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
                 self.linear_forward(layer)
@@ -99,7 +111,7 @@ class Verifier:
 
 
 def analyze(
-    net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
+    net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int, num_class: int
 ) -> bool:
     """
     Analyzes the given network with the given input and epsilon.
@@ -109,7 +121,7 @@ def analyze(
     :param true_label: True label of the input.
     :return: True if the network is verified, False otherwise.
     """
-    verifier = Verifier(net, inputs, eps, true_label)
+    verifier = Verifier(net, inputs, eps, true_label, num_class)
     verifier.forward()
     verifier.back_substitute()
     return verifier.check()
@@ -169,10 +181,14 @@ def main():
         net[1].weight = torch.nn.Parameter(torch.tensor([[1.0, -1.0, 2.0]]))
         net[1].bias = torch.nn.Parameter(torch.tensor([3.0]))
         
+        eps = 1
+        true_label = 0
+        num_class = 1
+
         image = torch.zeros(1,2)
         out = net(image)
-        analyze(net, image, 1, 0)
-        print(net)
+
+        logging.debug(net)
 
     else:
         net = get_network(
@@ -186,13 +202,13 @@ def main():
         image = image.to(DEVICE)
         out = net(image.unsqueeze(0))
 
-        pred_label = out.max(dim=1)[1].item()
-        assert pred_label == true_label
+    pred_label = out.max(dim=1)[1].item()
+    assert pred_label == true_label
 
-        if analyze(net, image, eps, true_label):
-            print("verified")
-        else:
-            print("not verified")
+    if analyze(net, image, eps, true_label, num_class):
+        logging.info("verified")
+    else:
+        logging.info("not verified")
 
 
 if __name__ == "__main__":
