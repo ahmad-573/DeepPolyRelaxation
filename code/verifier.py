@@ -7,7 +7,7 @@ from utils.loading import parse_spec
 DEVICE = "cpu"
 
 class Verifier:
-    def __init__(self, net, inputs, eps, true_label):
+    def __init__(self, net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int):
         self.net = net
         self.inputs = inputs
         self.eps = eps
@@ -19,7 +19,7 @@ class Verifier:
         self.low_relational = [self.lower_bound[0].flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound[0].flatten().view(1, -1).clone().T]
     
-    def linear_forward(self, layer):
+    def linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
         weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
 
@@ -32,13 +32,13 @@ class Verifier:
         self.low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
         self.up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
     
-    def conv_forward(self, layer):
+    def conv_forward(self, layer: torch.nn.Conv2d):
         pass
 
-    def relu_forward(self, layer):
+    def relu_forward(self, layer: torch.nn.ReLU):
         pass
 
-    def relu6_forward(self, layer):
+    def relu6_forward(self, layer: torch.nn.ReLU6):
         pass
     
     def back_substitute(self):
