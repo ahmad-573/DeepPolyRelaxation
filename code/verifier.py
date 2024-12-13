@@ -19,21 +19,21 @@ class Verifier:
         self.true_label = true_label
         self.num_class = num_class
 
-        logging.debug(f"Inputs: {inputs}")
-        logging.debug(f"Eps: {eps}")
-        logging.debug(f"True label: {true_label}")
+        # logging.debug(f"Inputs: {inputs}")
+        # logging.debug(f"Eps: {eps}")
+        # logging.debug(f"True label: {true_label}")
 
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
-        logging.debug(f"Lower bound: {self.lower_bound}")
-        logging.debug(f"Upper bound: {self.upper_bound}")
+        # logging.debug(f"Lower bound: {self.lower_bound}")
+        # logging.debug(f"Upper bound: {self.upper_bound}")
 
         self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
 
-        logging.debug(f"Low relational: {self.low_relational}")
-        logging.debug(f"Up relational: {self.up_relational}")
+        # logging.debug(f"Low relational: {self.low_relational}")
+        # logging.debug(f"Up relational: {self.up_relational}")
     
     def linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
