@@ -3,6 +3,7 @@ import torch
 
 from networks import get_network
 from utils.loading import parse_spec
+from utils.helpers import get_linear_combination_matrix
 
 DEVICE = "cpu"
 
@@ -16,8 +17,8 @@ class Verifier:
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
-        self.low_relational = [self.lower_bound[0].flatten().view(1, -1).clone().T]
-        self.up_relational = [self.upper_bound[0].flatten().view(1, -1).clone().T]
+        self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
+        self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
     
     def linear_forward(self, layer):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
@@ -33,7 +34,25 @@ class Verifier:
         self.up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
     
     def conv_forward(self, layer):
-        pass
+        kernel_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
+        kernel_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
+
+        input_shape = self.lower_bound.shape
+
+        lower_bound_new = torch.nn.functional.conv2d(self.lower_bound, kernel_positive, bias=layer.bias, stride=layer.stride, padding=layer.padding, dilation=layer.dilation, groups=layer.groups)
+        upper_bound_new = torch.nn.functional.conv2d(self.upper_bound, kernel_positive, bias=layer.bias, stride=layer.stride, padding=layer.padding, dilation=layer.dilation, groups=layer.groups)
+        lower_bound_new += torch.nn.functional.conv2d(self.upper_bound, kernel_negative, stride=layer.stride, padding=layer.padding, dilation=layer.dilation, groups=layer.groups)
+        upper_bound_new += torch.nn.functional.conv2d(self.lower_bound, kernel_negative, stride=layer.stride, padding=layer.padding, dilation=layer.dilation, groups=layer.groups)
+
+        linear_comb_matrix = get_linear_combination_matrix(self.lower_bound, layer)
+
+        self.lower_bound = lower_bound_new
+        self.upper_bound = upper_bound_new
+
+        self.low_relational.append(linear_comb_matrix)
+        self.up_relational.append(linear_comb_matrix)
+
+
 
     def relu_forward(self, layer):
         pass
@@ -144,7 +163,7 @@ def main():
         help="Neural network architecture which is supposed to be verified.",
     )
     parser.add_argument("--spec", type=str, required=True, help="Test case to verify.")
-    parser.add_argument("--test", type=int, required=True, help="simple: 0 or complex: 1")
+    parser.add_argument("--test", type=int, required=False, help="simple: 0 or complex: 1")
     args = parser.parse_args()
 
     true_label, dataset, image, eps = parse_spec(args.spec)
