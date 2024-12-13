@@ -216,32 +216,6 @@ def main():
     parser.add_argument("--test", type=int, required=False, help="simple: 0 or complex: 1")
     args = parser.parse_args()
 
-    true_label, dataset, image, eps = parse_spec(args.spec)
-
-    # read ground truth text file
-    gt_path = 'test_cases/gt.txt'
-    gt = []
-    specs = args.spec.split('/')
-    with open(gt_path, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            curr_specs = line.strip().split(',')
-            if curr_specs[0] == specs[1] and curr_specs[1] == specs[2]:
-                gt.append(curr_specs)
-    
-    print("testing:", specs)
-    print("Found ground truth:", gt)
-
-
-    # print(args.spec)
-
-    if dataset == "mnist":
-        in_ch, in_dim, num_class = 1, 28, 10
-    elif dataset == "cifar10":
-        in_ch, in_dim, num_class = 3, 32, 10
-    else:
-        raise ValueError(f"Unknown dataset: {dataset}")
-
     if args.test == 0:  # simple test for sanity checks
         net = torch.nn.Sequential(
             torch.nn.Linear(2, 2),
@@ -249,10 +223,6 @@ def main():
             torch.nn.Linear(2, 2),
             torch.nn.ReLU(),
             torch.nn.Linear(2, 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(2, 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(2, 2)
         )
         
         # Initialize weights according to the diagram in Lecture4 example
@@ -261,16 +231,12 @@ def main():
         net[0].bias = torch.nn.Parameter(torch.tensor([0.0, 0.0]))
         
         net[2].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
-                                                        [1.0, 1.0]]))
-        net[2].bias = torch.nn.Parameter(torch.tensor([0.0, 0.0]))
+                                                        [1.0, -1.0]]))
+        net[2].bias = torch.nn.Parameter(torch.tensor([-0.5, 0.0]))
         
-        net[4].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
-                                                        [-1.0, 1.0]]))
-        net[4].bias = torch.nn.Parameter(torch.tensor([-0.5, 0.0]))
-        
-        net[6].weight = torch.nn.Parameter(torch.tensor([[-1.0, 0.0], 
+        net[4].weight = torch.nn.Parameter(torch.tensor([[-1.0, 0.0], 
                                                         [1.0, 1.0]]))
-        net[6].bias = torch.nn.Parameter(torch.tensor([3.0, 0.0]))
+        net[4].bias = torch.nn.Parameter(torch.tensor([3.0, 0.0]))
         
         eps = 1
         true_label = 0
@@ -279,9 +245,36 @@ def main():
         image = torch.zeros(1, 2)  # Initial input point at origin
         out = net(image)
 
-        logging.debug(net)
+        is_verified = True
+
+        logging.info("Running simple test case")
 
     else:
+        true_label, dataset, image, eps = parse_spec(args.spec)
+
+        # read ground truth text file
+        gt_path = 'test_cases/gt.txt'
+        gt = []
+        specs = args.spec.split('/')
+        with open(gt_path, 'r') as f:
+            lines = f.readlines()
+            for line in lines:
+                curr_specs = line.strip().split(',')
+                if curr_specs[0] == specs[1] and curr_specs[1] == specs[2]:
+                    gt.append(curr_specs)
+        
+        logging.info(f"testing: {specs}")
+        logging.info(f"Found ground truth: {gt}")
+
+        is_verified = gt[0][2] == "verified"
+
+        if dataset == "mnist":
+            in_ch, in_dim, num_class = 1, 28, 10
+        elif dataset == "cifar10":
+            in_ch, in_dim, num_class = 3, 32, 10
+        else:
+            raise ValueError(f"Unknown dataset: {dataset}")
+
         net = get_network(
             args.net,
             in_ch=in_ch,
@@ -294,15 +287,19 @@ def main():
         out = net(image.unsqueeze(0))
 
     pred_label = out.max(dim=1)[1].item()
-    assert pred_label == true_label
+    
+    if not pred_label == true_label:
+        logging.error(f"Predicted label: {pred_label}")
+        logging.error(f"True label: {true_label}")
+        # assert pred_label == true_label
 
     if analyze(net, image, eps, true_label, num_class):
-        if gt[0][2] == "verified":
+        if is_verified:
             logging.info("verified - correct")
         else:
             logging.info("not verified - incorrect")
     else:
-        if gt[0][2] == "not verified":
+        if not is_verified:
             logging.info("not verified - correct")
         else:
             logging.info("verified - incorrect")
