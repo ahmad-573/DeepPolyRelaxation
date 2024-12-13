@@ -204,22 +204,41 @@ def main():
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
-    if args.test == 0: # simple test for sanity checks
+    if args.test == 0:  # simple test for sanity checks
         net = torch.nn.Sequential(
-            torch.nn.Linear(2, 3),
-            torch.nn.Linear(3, 1)
+            torch.nn.Linear(2, 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2, 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2, 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2, 2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2, 2)
         )
-        # init net
-        net[0].weight = torch.nn.Parameter(torch.tensor([[2.0, -1.0], [1.0, -3.0], [1.0, 2.0]]))
-        net[0].bias = torch.nn.Parameter(torch.tensor([1.0, 3.0, 5.0]))
-        net[1].weight = torch.nn.Parameter(torch.tensor([[1.0, -1.0, 2.0]]))
-        net[1].bias = torch.nn.Parameter(torch.tensor([3.0]))
+        
+        # Initialize weights according to the diagram in Lecture4 example
+        net[0].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
+                                                        [1.0, -1.0]]))
+        net[0].bias = torch.nn.Parameter(torch.tensor([0.0, 0.0]))
+        
+        net[2].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
+                                                        [1.0, 1.0]]))
+        net[2].bias = torch.nn.Parameter(torch.tensor([0.0, 0.0]))
+        
+        net[4].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
+                                                        [-1.0, 1.0]]))
+        net[4].bias = torch.nn.Parameter(torch.tensor([-0.5, 0.0]))
+        
+        net[6].weight = torch.nn.Parameter(torch.tensor([[-1.0, 0.0], 
+                                                        [1.0, 1.0]]))
+        net[6].bias = torch.nn.Parameter(torch.tensor([3.0, 0.0]))
         
         eps = 1
         true_label = 0
-        num_class = 1
+        num_class = 2
 
-        image = torch.zeros(1,2)
+        image = torch.zeros(1, 2)  # Initial input point at origin
         out = net(image)
 
         logging.debug(net)
