@@ -23,6 +23,8 @@ class Verifier:
         logging.debug(f"Eps: {eps}")
         logging.debug(f"True label: {true_label}")
 
+        # self.lower_bound = inputs - eps
+        # self.upper_bound = inputs + eps
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
@@ -34,6 +36,8 @@ class Verifier:
 
         logging.debug(f"Low relational: {self.low_relational}")
         logging.debug(f"Up relational: {self.up_relational}")
+        logging.debug("--------------------------------\n")
+
     
     def linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
@@ -68,47 +72,42 @@ class Verifier:
         self.up_relational.append(linear_comb_matrix)
 
 
-
     def relu_forward(self, layer: torch.nn.ReLU):
-        case1_map = (self.upper_bound <= 0).float()  # Case 1: upper bound ≤ 0 -> output = 0
-        case2_map = (self.lower_bound >= 0).float()  # Case 2: lower bound ≥ 0 -> output = input
+        case1_map = (self.upper_bound <= 0).float() # Case 1: upper bound ≤ 0 -> output = 0
+        case2_map = (self.lower_bound >= 0).float() # Case 2: lower bound ≥ 0 -> output = input
         case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
         
-        # handle case 1 and 2
+        # Handle Case 1 and Case 2
         lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) + case2_map * self.lower_bound
         upper_bound_new = case1_map * torch.zeros_like(self.upper_bound) + case2_map * self.upper_bound
 
-        # For case 3, lower bound is 0 and upper bound is the original upper bound
-        lower_bound_new = lower_bound_new + case3_map * torch.zeros_like(self.lower_bound)
-        upper_bound_new = upper_bound_new + case3_map * self.upper_bound
+        low_relational_new = case1_map.view(-1, 1) * torch.zeros_like(self.low_relational[-1]) + \
+                            case2_map.view(-1, 1) * torch.cat((torch.eye(self.lower_bound.shape[1]), torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
+        up_relational_new = low_relational_new.clone()
 
-        logging.debug(f"Lower bound new shape: {lower_bound_new.shape}")
-        logging.debug(f"Upper bound new shape: {upper_bound_new.shape}")
-
-        # For relational bounds
-        # Case 1: zero matrix with zero bias
-        # Case 2: identity matrix with zero bias
-        # Case 3: slope between 0 and 1 based on bounds with appropriate bias
-        identity = torch.eye(self.lower_bound.shape[1]).to(DEVICE)
-        zeros = torch.zeros_like(identity)
+        # Handle Case 3
+        lower_bound_new += case3_map * torch.zeros_like(self.lower_bound)  # Lower bound = 0
+        upper_bound_new += case3_map * self.upper_bound  # Upper bound = u_i
         
-        slopes = case3_map * (self.upper_bound / (self.upper_bound - self.lower_bound + 1e-8))
+        # Compute slopes (λ) for relational bounds
+        slopes = self.upper_bound / (self.upper_bound - self.lower_bound + 1e-8)
         slopes = torch.where(torch.isnan(slopes), torch.zeros_like(slopes), slopes)
-        
-        # Calculate bias terms
-        bias_case3 = -slopes * self.lower_bound
-        
-        # Create matrices with bias terms
-        weights_with_bias = torch.cat([
-            case1_map * zeros + case2_map * identity + case3_map * (slopes * identity),
-            torch.zeros_like(case1_map) + case3_map * bias_case3
-        ], dim=1)
-        
-        self.low_relational.append(weights_with_bias.T)
-        self.up_relational.append(weights_with_bias.T)
 
+        # DeepPoly ReLU relaxation I
+        bias = -slopes * self.lower_bound
+        case3_low_relational = torch.zeros_like(self.low_relational[-1])
+        case3_up_relational = torch.cat((slopes * torch.eye(self.lower_bound.shape[1]), bias.T), dim=1)
+
+        low_relational_new += case3_map.view(-1, 1) * case3_low_relational
+        up_relational_new += case3_map.view(-1, 1) * case3_up_relational
+
+
+        # Update bounds
         self.lower_bound = lower_bound_new
         self.upper_bound = upper_bound_new
+
+        self.low_relational.append(low_relational_new)
+        self.up_relational.append(up_relational_new)
 
     def relu6_forward(self, layer: torch.nn.ReLU6):
         pass
@@ -150,7 +149,7 @@ class Verifier:
     
     def forward(self):
         for i, layer in enumerate(self.net):
-            logging.debug(f"Layer {i}: {layer.__class__.__name__}")
+            logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
@@ -164,6 +163,12 @@ class Verifier:
             
             elif layer.__class__.__name__ == "ReLU6":
                 self.relu6_forward(layer)
+            
+            logging.debug(f"Lower bound: {self.lower_bound}")
+            logging.debug(f"Upper bound: {self.upper_bound}")
+            logging.debug(f"Low relational: {self.low_relational[-1]}")
+            logging.debug(f"Up relational: {self.up_relational[-1]}")
+            logging.debug("--------------------------------\n")
 
 
 
@@ -297,12 +302,12 @@ def main():
         if is_verified:
             logging.info("verified - correct")
         else:
-            logging.info("not verified - incorrect")
+            logging.info("verified - incorrect")
     else:
         if not is_verified:
             logging.info("not verified - correct")
         else:
-            logging.info("verified - incorrect")
+            logging.info("not verified - incorrect")
 
 if __name__ == "__main__":
     main()
