@@ -9,7 +9,7 @@ DEVICE = "cpu"
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s(%(funcName)s:%(lineno)d) | %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s(%(funcName)s:%(lineno)d) | %(message)s')
 
 class Verifier:
     def __init__(self, net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int, num_class: int):
@@ -19,21 +19,21 @@ class Verifier:
         self.true_label = true_label
         self.num_class = num_class
 
-        # logging.debug(f"Inputs: {inputs}")
-        # logging.debug(f"Eps: {eps}")
-        # logging.debug(f"True label: {true_label}")
+        logging.debug(f"Inputs: {inputs}")
+        logging.debug(f"Eps: {eps}")
+        logging.debug(f"True label: {true_label}")
 
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
-        # logging.debug(f"Lower bound: {self.lower_bound}")
-        # logging.debug(f"Upper bound: {self.upper_bound}")
+        logging.debug(f"Lower bound: {self.lower_bound}")
+        logging.debug(f"Upper bound: {self.upper_bound}")
 
         self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
 
-        # logging.debug(f"Low relational: {self.low_relational}")
-        # logging.debug(f"Up relational: {self.up_relational}")
+        logging.debug(f"Low relational: {self.low_relational}")
+        logging.debug(f"Up relational: {self.up_relational}")
     
     def linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
@@ -70,7 +70,45 @@ class Verifier:
 
 
     def relu_forward(self, layer: torch.nn.ReLU):
-        pass
+        case1_map = (self.upper_bound <= 0).float()  # Case 1: upper bound ≤ 0 -> output = 0
+        case2_map = (self.lower_bound >= 0).float()  # Case 2: lower bound ≥ 0 -> output = input
+        case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
+        
+        # handle case 1 and 2
+        lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) + case2_map * self.lower_bound
+        upper_bound_new = case1_map * torch.zeros_like(self.upper_bound) + case2_map * self.upper_bound
+
+        # For case 3, lower bound is 0 and upper bound is the original upper bound
+        lower_bound_new = lower_bound_new + case3_map * torch.zeros_like(self.lower_bound)
+        upper_bound_new = upper_bound_new + case3_map * self.upper_bound
+
+        logging.debug(f"Lower bound new shape: {lower_bound_new.shape}")
+        logging.debug(f"Upper bound new shape: {upper_bound_new.shape}")
+
+        # For relational bounds
+        # Case 1: zero matrix with zero bias
+        # Case 2: identity matrix with zero bias
+        # Case 3: slope between 0 and 1 based on bounds with appropriate bias
+        identity = torch.eye(self.lower_bound.shape[1]).to(DEVICE)
+        zeros = torch.zeros_like(identity)
+        
+        slopes = case3_map * (self.upper_bound / (self.upper_bound - self.lower_bound + 1e-8))
+        slopes = torch.where(torch.isnan(slopes), torch.zeros_like(slopes), slopes)
+        
+        # Calculate bias terms
+        bias_case3 = -slopes * self.lower_bound
+        
+        # Create matrices with bias terms
+        weights_with_bias = torch.cat([
+            case1_map * zeros + case2_map * identity + case3_map * (slopes * identity),
+            torch.zeros_like(case1_map) + case3_map * bias_case3
+        ], dim=1)
+        
+        self.low_relational.append(weights_with_bias.T)
+        self.up_relational.append(weights_with_bias.T)
+
+        self.lower_bound = lower_bound_new
+        self.upper_bound = upper_bound_new
 
     def relu6_forward(self, layer: torch.nn.ReLU6):
         pass
@@ -263,13 +301,11 @@ def main():
             logging.info("verified - correct")
         else:
             logging.info("not verified - incorrect")
-        # logging.info("verified")
     else:
         if gt[0][2] == "not verified":
             logging.info("not verified - correct")
         else:
             logging.info("verified - incorrect")
-        # logging.info("not verified")
 
 if __name__ == "__main__":
     main()
