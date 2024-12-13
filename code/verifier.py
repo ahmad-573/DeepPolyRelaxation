@@ -180,6 +180,21 @@ def main():
 
     true_label, dataset, image, eps = parse_spec(args.spec)
 
+    # read ground truth text file
+    gt_path = 'test_cases/gt.txt'
+    gt = []
+    specs = args.spec.split('/')
+    with open(gt_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            curr_specs = line.strip().split(',')
+            if curr_specs[0] == specs[1] and curr_specs[1] == specs[2]:
+                gt.append(curr_specs)
+    
+    print("testing:", specs)
+    print("Found ground truth:", gt)
+
+
     # print(args.spec)
 
     if dataset == "mnist":
@@ -225,10 +240,17 @@ def main():
     assert pred_label == true_label
 
     if analyze(net, image, eps, true_label, num_class):
-        logging.info("verified")
+        if gt[0][2] == "verified":
+            logging.info("verified - correct")
+        else:
+            logging.info("not verified - incorrect")
+        # logging.info("verified")
     else:
-        logging.info("not verified")
-
+        if gt[0][2] == "not verified":
+            logging.info("not verified - correct")
+        else:
+            logging.info("verified - incorrect")
+        # logging.info("not verified")
 
 if __name__ == "__main__":
     main()
