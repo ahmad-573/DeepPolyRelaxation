@@ -81,8 +81,17 @@ class Verifier:
         lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) + case2_map * self.lower_bound
         upper_bound_new = case1_map * torch.zeros_like(self.upper_bound) + case2_map * self.upper_bound
 
-        low_relational_new = case1_map.view(-1, 1) * torch.zeros_like(self.low_relational[-1]) + \
-                            case2_map.view(-1, 1) * torch.cat((torch.eye(self.lower_bound.shape[1]), torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
+        # print(case1_map.shape, self.low_relational[-1].shape, self.lower_bound.shape)
+
+        low_relational_new = torch.zeros((self.lower_bound.shape[1], self.lower_bound.shape[1]))
+        up_relational_new = low_relational_new.clone()
+
+        # low_relational_new = case1_map.view(-1, 1) * torch.zeros_like(self.low_relational[-1]) + \
+        #                     case2_map.view(-1, 1) * torch.cat((torch.eye(self.lower_bound.shape[1]), torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
+        # up_relational_new = low_relational_new.clone()
+        low_relational_new += case2_map * torch.eye(self.lower_bound.shape[1])
+        # append a bias column
+        low_relational_new = torch.cat((low_relational_new, torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
         up_relational_new = low_relational_new.clone()
 
         # Handle Case 3
@@ -95,10 +104,11 @@ class Verifier:
 
         # DeepPoly ReLU relaxation I
         bias = -slopes * self.lower_bound
-        case3_low_relational = torch.zeros_like(self.low_relational[-1])
+
+        # case3_low_relational = torch.zeros_like(self.low_relational[-1])
         case3_up_relational = torch.cat((slopes * torch.eye(self.lower_bound.shape[1]), bias.T), dim=1)
 
-        low_relational_new += case3_map.view(-1, 1) * case3_low_relational
+        # low_relational_new += case3_map.view(-1, 1) * case3_low_relational
         up_relational_new += case3_map.view(-1, 1) * case3_up_relational
 
 
@@ -149,7 +159,7 @@ class Verifier:
     
     def forward(self):
         for i, layer in enumerate(self.net):
-            logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
+            logging.info(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
