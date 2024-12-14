@@ -76,6 +76,7 @@ class Verifier:
         case1_map = (self.upper_bound <= 0).float() # Case 1: upper bound ≤ 0 -> output = 0
         case2_map = (self.lower_bound >= 0).float() # Case 2: lower bound ≥ 0 -> output = input
         case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
+        # print(case1_map.shape)
         
         # Handle Case 1 and Case 2
         lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) + case2_map * self.lower_bound
@@ -83,15 +84,15 @@ class Verifier:
 
         # print(case1_map.shape, self.low_relational[-1].shape, self.lower_bound.shape)
 
-        low_relational_new = torch.zeros((self.lower_bound.shape[1], self.lower_bound.shape[1]))
+        low_relational_new = torch.zeros((self.low_relational[-1].shape[0], self.low_relational[-1].shape[0]))
         up_relational_new = low_relational_new.clone()
 
         # low_relational_new = case1_map.view(-1, 1) * torch.zeros_like(self.low_relational[-1]) + \
         #                     case2_map.view(-1, 1) * torch.cat((torch.eye(self.lower_bound.shape[1]), torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
         # up_relational_new = low_relational_new.clone()
-        low_relational_new += case2_map * torch.eye(self.lower_bound.shape[1])
+        low_relational_new += case2_map.flatten().view(1,-1) * torch.eye(self.low_relational[-1].shape[0])
         # append a bias column
-        low_relational_new = torch.cat((low_relational_new, torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
+        low_relational_new = torch.cat((low_relational_new, torch.zeros(self.low_relational[-1].shape[0], 1)), dim=1)
         up_relational_new = low_relational_new.clone()
 
         # Handle Case 3
@@ -105,8 +106,12 @@ class Verifier:
         # DeepPoly ReLU relaxation I
         bias = -slopes * self.lower_bound
 
+        # print(slopes.shape, bias.shape)
+        slopes = slopes.flatten().view(1, -1)
+        bias = bias.flatten().view(1, -1)
+
         # case3_low_relational = torch.zeros_like(self.low_relational[-1])
-        case3_up_relational = torch.cat((slopes * torch.eye(self.lower_bound.shape[1]), bias.T), dim=1)
+        case3_up_relational = torch.cat((slopes * torch.eye(self.low_relational[-1].shape[0]), bias.T), dim=1)
 
         # low_relational_new += case3_map.view(-1, 1) * case3_low_relational
         up_relational_new += case3_map.view(-1, 1) * case3_up_relational

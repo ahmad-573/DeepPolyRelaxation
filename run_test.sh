@@ -14,4 +14,4 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Run python script with the appropriate test value
-python code/verifier.py --net fc_base --spec test_cases/fc_base/img_mnist_0.048508.txt --test $test_value
+python code/verifier.py --net conv_d --spec test_cases/conv_d/img_mnist_0.103841.txt --test $test_value
