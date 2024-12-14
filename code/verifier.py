@@ -152,8 +152,14 @@ class Verifier:
             curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
             curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
 
-        self.lower_bound = torch.maximum(self.lower_bound, curr_lower.T)
-        self.upper_bound = torch.minimum(self.upper_bound, curr_upper.T)
+
+        shape = self.lower_bound.shape
+
+        self.lower_bound = torch.maximum(self.lower_bound.flatten().view(1,-1), curr_lower.T)
+        self.upper_bound = torch.minimum(self.upper_bound.flatten().view(1,-1), curr_upper.T)
+
+        self.lower_bound = self.lower_bound.view(shape)
+        self.upper_bound = self.upper_bound.view(shape)
     
     def check(self):
         for i in range(self.num_class):
@@ -169,23 +175,32 @@ class Verifier:
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
                 self.linear_forward(layer)
+                self.back_substitute()
             
             elif layer.__class__.__name__ == "Conv2d":
                 self.conv_forward(layer)
+                self.back_substitute()
             
             elif layer.__class__.__name__ == "ReLU":
                 self.relu_forward(layer)
+                # self.back_substitute()
             
             elif layer.__class__.__name__ == "ReLU6":
                 self.relu6_forward(layer)
+                # self.back_substitute()
             
-            logging.debug(f"Lower bound: {self.lower_bound}")
-            logging.debug(f"Upper bound: {self.upper_bound}")
-            logging.debug(f"Low relational: {self.low_relational[-1]}")
-            logging.debug(f"Up relational: {self.up_relational[-1]}")
-            logging.debug("--------------------------------\n")
+            
+            # logging.info(f"Lower bound: {self.lower_bound}")
+            # logging.info(f"Upper bound: {self.upper_bound}")
+            # logging.info(f"Low relational: {self.low_relational[-1]}")
+            # logging.info(f"Up relational: {self.up_relational[-1]}")
+            # logging.info("--------------------------------\n")
 
-
+        # logging.info(f"Final lower bound: {self.lower_bound}")
+        # logging.info(f"Final upper bound: {self.upper_bound}")
+        # logging.info(f"Final low relational: {self.low_relational[-1]}")
+        # logging.info(f"Final up relational: {self.up_relational[-1]}")
+        # logging.info("--------------------------------\n")
 
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int, num_class: int
@@ -200,7 +215,7 @@ def analyze(
     """
     verifier = Verifier(net, inputs, eps, true_label, num_class)
     verifier.forward()
-    verifier.back_substitute()
+    # verifier.back_substitute()
     return verifier.check()
 
 def main():
@@ -237,6 +252,7 @@ def main():
     args = parser.parse_args()
 
     if args.test == 0:  # simple test for sanity checks
+        # print("JERE")
         net = torch.nn.Sequential(
             torch.nn.Linear(2, 2),
             torch.nn.ReLU(),
@@ -254,8 +270,8 @@ def main():
                                                         [1.0, -1.0]]))
         net[2].bias = torch.nn.Parameter(torch.tensor([-0.5, 0.0]))
         
-        net[4].weight = torch.nn.Parameter(torch.tensor([[-1.0, 0.0], 
-                                                        [1.0, 1.0]]))
+        net[4].weight = torch.nn.Parameter(torch.tensor([[-1.0, 1.0], 
+                                                        [0.0, 1.0]]))
         net[4].bias = torch.nn.Parameter(torch.tensor([3.0, 0.0]))
         
         eps = 1
