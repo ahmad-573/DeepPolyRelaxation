@@ -80,7 +80,7 @@ class Verifier:
         return verification_layer
 
     
-    def linear_forward(self, layer: torch.nn.Linear):
+    def _linear_forward(self, layer: torch.nn.Linear):
         weights_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
         weights_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
 
@@ -93,7 +93,7 @@ class Verifier:
         self.low_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # shape: (out_dim, in_dim + 1) cuz of bias
         self.up_relational.append(torch.cat((layer.weight, layer.bias.view(-1, 1)), dim=1)) # same shape
     
-    def conv_forward(self, layer):
+    def _conv_forward(self, layer):
         kernel_positive = torch.maximum(layer.weight, torch.zeros_like(layer.weight))
         kernel_negative = torch.minimum(layer.weight, torch.zeros_like(layer.weight))
 
@@ -113,7 +113,7 @@ class Verifier:
         self.up_relational.append(linear_comb_matrix)
 
 
-    def relu_forward(self, layer: torch.nn.ReLU, layer_idx: int):
+    def _relu_forward(self, layer: torch.nn.ReLU, layer_idx: int):
         case1_map = (self.upper_bound <= 0).float() # Case 1: upper bound ≤ 0 -> output = 0
         case2_map = (self.lower_bound >= 0).float() # Case 2: lower bound ≥ 0 -> output = input
         case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
@@ -166,10 +166,13 @@ class Verifier:
         self.low_relational.append(low_relational_new)
         self.up_relational.append(up_relational_new)
 
-    def relu6_forward(self, layer: torch.nn.ReLU6):
+    def _relu6_forward(self, layer: torch.nn.ReLU6):
+        pass
+
+    def _skip_connection_forward(self, layer: torch.nn.SkipConnection):
         pass
     
-    def back_substitute(self):
+    def _back_substitute(self):
         curr_lower = self.low_relational[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
         curr_upper = self.up_relational[-1]
         for i in range(len(self.low_relational)-2, -1, -1):
@@ -221,18 +224,21 @@ class Verifier:
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
-                self.linear_forward(layer)
-                self.back_substitute()
+                self._linear_forward(layer)
+                self._back_substitute()
             
             elif layer.__class__.__name__ == "Conv2d":
-                self.conv_forward(layer)
-                self.back_substitute()
+                self._conv_forward(layer)
+                self._back_substitute()
             
             elif layer.__class__.__name__ == "ReLU":
-                self.relu_forward(layer, i)
+                self._relu_forward(layer, i)
             
             elif layer.__class__.__name__ == "ReLU6":
-                self.relu6_forward(layer)
+                self._relu6_forward(layer)
+            
+            elif layer.__class__.__name__ == "SkipConnection":
+                self._skip_connection_forward(layer)
             
             logging.debug(f"Lower bound: {self.lower_bound}")
             logging.debug(f"Upper bound: {self.upper_bound}")
@@ -242,8 +248,8 @@ class Verifier:
 
         # Apply verification layer at the end
         logging.debug(f"------- Layer {len(self.net)}: Verification Layer -------")
-        self.linear_forward(self.verification_layer)
-        self.back_substitute()
+        self._linear_forward(self.verification_layer)
+        self._back_substitute()
 
         logging.debug(f"Final lower bound: {self.lower_bound}")
         logging.debug(f"Final upper bound: {self.upper_bound}")
