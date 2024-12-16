@@ -34,7 +34,7 @@ class Verifier:
         
         # Initialize optimizer parameters
         self.lr = 0.1
-        self.steps = 50
+        self.steps = 5
         self.alpha_init = 0.5
 
         logging.debug(f"Inputs: {inputs}, Eps: {eps}, True label: {true_label}")
@@ -169,7 +169,7 @@ class Verifier:
     def _relu6_forward(self, layer: torch.nn.ReLU6):
         pass
 
-    def _skip_connection_forward(self, layer: torch.nn.SkipConnection):
+    def _skip_connection_forward(self, layer):
         pass
     
     def _back_substitute(self):
@@ -399,8 +399,8 @@ def main():
                 if curr_specs[0] == specs[1] and curr_specs[1] == specs[2]:
                     gt.append(curr_specs)
         
-        logging.info(f"testing: {specs}")
-        logging.info(f"Found ground truth: {gt}")
+        logging.debug(f"testing: {specs}")
+        logging.debug(f"Found ground truth: {gt}")
 
         is_verified = gt[0][2] == "verified"
 
@@ -431,14 +431,14 @@ def main():
 
     if analyze(net, image, eps, true_label, num_class):
         if is_verified:
-            logging.info("verified - correct")
+            print("verified - correct")
         else:
-            logging.info("verified - incorrect")
+            print("verified - incorrect")
     else:
         if not is_verified:
-            logging.info("not verified - correct")
+            print("not verified - correct")
         else:
-            logging.info("not verified - incorrect")
+            print("not verified - incorrect")
 
 if __name__ == "__main__":
     main()
