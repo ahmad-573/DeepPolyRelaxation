@@ -7,6 +7,8 @@ from utils.helpers import get_linear_combination_matrix
 
 DEVICE = "cpu"
 
+RELU_RELAXATION_TYPE = 3 # 1, 2, or 3 (alpha)
+
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s(%(funcName)s:%(lineno)d) | %(message)s')
@@ -19,24 +21,63 @@ class Verifier:
         self.true_label = true_label
         self.num_class = num_class
 
-        logging.debug(f"Inputs: {inputs}")
-        logging.debug(f"Eps: {eps}")
-        logging.debug(f"True label: {true_label}")
+        # Make all layers weights and biases non-trainable
+        for layer in self.net:
+            for param in layer.parameters():
+                param.requires_grad = False
+
+        # Add verification layer
+        self.verification_layer = self._get_output_layer(num_class, true_label) 
+
+        # Initialize trainable alphas
+        self.alphas = {}
+        
+        # Initialize optimizer parameters
+        self.lr = 0.1
+        self.steps = 50
+        self.alpha_init = 0.5
+
+        logging.debug(f"Inputs: {inputs}, Eps: {eps}, True label: {true_label}")
 
         # self.lower_bound = inputs - eps
         # self.upper_bound = inputs + eps
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
-        logging.debug(f"Lower bound: {self.lower_bound}")
-        logging.debug(f"Upper bound: {self.upper_bound}")
-
         self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
 
+        logging.debug(f"Lower bound: {self.lower_bound}")
+        logging.debug(f"Upper bound: {self.upper_bound}")
         logging.debug(f"Low relational: {self.low_relational}")
         logging.debug(f"Up relational: {self.up_relational}")
+        logging.debug(f"Verification layer: {self.verification_layer}")
+
         logging.debug("--------------------------------\n")
+
+    
+    @staticmethod
+    def _get_output_layer(num_classes: int, true_label: int) -> torch.nn.Linear:
+        """Get the output layer that captures the verification task."""
+        logging.debug(f"Num classes: {num_classes}")
+        logging.debug(f"True label: {true_label}")
+
+        verification_layer = torch.nn.Linear(num_classes, num_classes - 1)
+        verification_layer.bias = torch.nn.Parameter(torch.zeros(num_classes - 1))
+        torch.nn.init.zeros_(verification_layer.weight)
+
+        # The i^th row corresponds to y_true - y_i for i < true_label
+        # and y_true - y_{i+1} for i >= true_label
+        with torch.no_grad():
+            verification_layer.weight[:, true_label] = 1
+            verification_layer.weight[:true_label, :true_label].fill_diagonal_(-1)
+            verification_layer.weight[true_label:, true_label + 1:].fill_diagonal_(-1)
+
+        # Make sure this layer isn't trained
+        for param in verification_layer.parameters():
+            param.requires_grad = False
+
+        return verification_layer
 
     
     def linear_forward(self, layer: torch.nn.Linear):
@@ -72,7 +113,7 @@ class Verifier:
         self.up_relational.append(linear_comb_matrix)
 
 
-    def relu_forward(self, layer: torch.nn.ReLU):
+    def relu_forward(self, layer: torch.nn.ReLU, layer_idx: int):
         case1_map = (self.upper_bound <= 0).float() # Case 1: upper bound ≤ 0 -> output = 0
         case2_map = (self.lower_bound >= 0).float() # Case 2: lower bound ≥ 0 -> output = input
         case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
@@ -82,16 +123,10 @@ class Verifier:
         lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) + case2_map * self.lower_bound
         upper_bound_new = case1_map * torch.zeros_like(self.upper_bound) + case2_map * self.upper_bound
 
-        # print(case1_map.shape, self.low_relational[-1].shape, self.lower_bound.shape)
-
         low_relational_new = torch.zeros((self.low_relational[-1].shape[0], self.low_relational[-1].shape[0]))
         up_relational_new = low_relational_new.clone()
 
-        # low_relational_new = case1_map.view(-1, 1) * torch.zeros_like(self.low_relational[-1]) + \
-        #                     case2_map.view(-1, 1) * torch.cat((torch.eye(self.lower_bound.shape[1]), torch.zeros(self.lower_bound.shape[1], 1)), dim=1)
-        # up_relational_new = low_relational_new.clone()
         low_relational_new += case2_map.flatten().view(1,-1) * torch.eye(self.low_relational[-1].shape[0])
-        # append a bias column
         low_relational_new = torch.cat((low_relational_new, torch.zeros(self.low_relational[-1].shape[0], 1)), dim=1)
         up_relational_new = low_relational_new.clone()
 
@@ -102,25 +137,32 @@ class Verifier:
         # Compute slopes (λ) for relational bounds
         slopes = self.upper_bound / (self.upper_bound - self.lower_bound + 1e-8)
         slopes = torch.where(torch.isnan(slopes), torch.zeros_like(slopes), slopes)
-
-        # DeepPoly ReLU relaxation I
         bias = -slopes * self.lower_bound
 
-        # print(slopes.shape, bias.shape)
         slopes = slopes.flatten().view(1, -1)
         bias = bias.flatten().view(1, -1)
 
-        # case3_low_relational = torch.zeros_like(self.low_relational[-1])
         case3_up_relational = torch.cat((slopes * torch.eye(self.low_relational[-1].shape[0]), bias.T), dim=1)
-
-        # low_relational_new += case3_map.view(-1, 1) * case3_low_relational
         up_relational_new += case3_map.view(-1, 1) * case3_up_relational
 
+        if RELU_RELAXATION_TYPE == 1:
+            case3_low_relational = torch.zeros_like(self.low_relational[-1])
+        elif RELU_RELAXATION_TYPE == 2:
+            case3_low_relational = torch.cat((torch.eye(self.low_relational[-1].shape[0]), torch.zeros_like(bias.T)), dim=1)
+        elif RELU_RELAXATION_TYPE == 3:
+            # Use trainable alpha instead of fixed value
+            if layer_idx not in self.alphas:
+                self.alphas[layer_idx] = torch.nn.Parameter(
+                    torch.ones_like(self.lower_bound) * self.alpha_init
+                )
+            alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+            case3_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]), 
+                                            torch.zeros_like(bias.T)), dim=1)
 
-        # Update bounds
+        low_relational_new += case3_map.view(-1, 1) * case3_low_relational
+
         self.lower_bound = lower_bound_new
         self.upper_bound = upper_bound_new
-
         self.low_relational.append(low_relational_new)
         self.up_relational.append(up_relational_new)
 
@@ -162,15 +204,20 @@ class Verifier:
         self.upper_bound = self.upper_bound.view(shape)
     
     def check(self):
-        for i in range(self.num_class):
-            if i != self.true_label:
-                if self.lower_bound[0][self.true_label] <= self.upper_bound[0][i]:
-                    return False
-        return True
+        # Since the verification layer computes y_true - y_other,
+        # we just need to check if all lower bounds are positive
+        return (self.lower_bound > 0).all()
     
     def forward(self):
+        # Reset bounds and relational constraints at the start of each forward pass
+        self.lower_bound = torch.maximum(self.inputs - self.eps, torch.zeros_like(self.inputs))
+        self.upper_bound = torch.minimum(self.inputs + self.eps, torch.ones_like(self.inputs))
+        
+        self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
+        self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
+
         for i, layer in enumerate(self.net):
-            logging.info(f"------- Layer {i}: {layer.__class__.__name__} -------")
+            logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
@@ -182,25 +229,67 @@ class Verifier:
                 self.back_substitute()
             
             elif layer.__class__.__name__ == "ReLU":
-                self.relu_forward(layer)
-                # self.back_substitute()
+                self.relu_forward(layer, i)
             
             elif layer.__class__.__name__ == "ReLU6":
                 self.relu6_forward(layer)
-                # self.back_substitute()
             
-            
-            # logging.info(f"Lower bound: {self.lower_bound}")
-            # logging.info(f"Upper bound: {self.upper_bound}")
-            # logging.info(f"Low relational: {self.low_relational[-1]}")
-            # logging.info(f"Up relational: {self.up_relational[-1]}")
-            # logging.info("--------------------------------\n")
+            logging.debug(f"Lower bound: {self.lower_bound}")
+            logging.debug(f"Upper bound: {self.upper_bound}")
+            logging.debug(f"Low relational: {self.low_relational[-1]}")
+            logging.debug(f"Up relational: {self.up_relational[-1]}")
+            logging.debug("--------------------------------\n")
 
-        # logging.info(f"Final lower bound: {self.lower_bound}")
-        # logging.info(f"Final upper bound: {self.upper_bound}")
-        # logging.info(f"Final low relational: {self.low_relational[-1]}")
-        # logging.info(f"Final up relational: {self.up_relational[-1]}")
-        # logging.info("--------------------------------\n")
+        # Apply verification layer at the end
+        logging.debug(f"------- Layer {len(self.net)}: Verification Layer -------")
+        self.linear_forward(self.verification_layer)
+        self.back_substitute()
+
+        logging.debug(f"Final lower bound: {self.lower_bound}")
+        logging.debug(f"Final upper bound: {self.upper_bound}")
+        logging.debug(f"Final low relational: {self.low_relational[-1]}")
+        logging.debug(f"Final up relational: {self.up_relational[-1]}")
+        logging.debug("--------------------------------\n")
+
+    def optimize(self):
+        """Optimize alpha parameters to improve verification precision."""
+        # Do one forward pass to create the alpha parameters
+        self.forward()
+        
+        # Check if we already succeeded
+        if self.check():
+            return True
+            
+        # Return false if no trainable parameters
+        if len(self.alphas) == 0:
+            return False
+        
+        # Now create optimizer with the created parameters
+        optimizer = torch.optim.RMSprop(self.alphas.values(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.steps)
+
+        for step in range(self.steps):
+            optimizer.zero_grad()
+            
+            self.forward()
+            
+            outputs = self.lower_bound
+            min_output = outputs.min()
+            
+            # If verified, we can stop
+            if min_output > 0:
+                return True
+                
+            # Loss is negative of minimum output (we want to maximize it)
+            loss = -min_output
+            loss.backward()
+            
+            optimizer.step()
+            scheduler.step()
+            
+            logging.debug(f"Step {step}, Min output: {min_output:.4f}")
+        
+        return False
 
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int, num_class: int
@@ -214,8 +303,13 @@ def analyze(
     :return: True if the network is verified, False otherwise.
     """
     verifier = Verifier(net, inputs, eps, true_label, num_class)
+    
+    # Try to verify with optimization
+    if verifier.optimize():
+        return True
+    
+    # If optimization fails, do one final forward pass and check
     verifier.forward()
-    # verifier.back_substitute()
     return verifier.check()
 
 def main():
