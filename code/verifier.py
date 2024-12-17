@@ -30,12 +30,14 @@ class Verifier:
         self.verification_layer = self._get_output_layer(num_class, true_label) 
 
         # Initialize trainable alphas
-        self.alphas = {}
+        self.alphas = {} # slope for lower relational bounds
+        self.betas = {} # slope for upper relational bounds
         
         # Initialize optimizer parameters
         self.lr = 0.1
-        self.steps = 5
+        self.steps = 10
         self.alpha_init = 0.5
+        self.beta_init = 0.5
 
         logging.debug(f"Inputs: {inputs}, Eps: {eps}, True label: {true_label}")
 
@@ -166,8 +168,141 @@ class Verifier:
         self.low_relational.append(low_relational_new)
         self.up_relational.append(up_relational_new)
 
-    def _relu6_forward(self, layer: torch.nn.ReLU6):
-        pass
+    def _relu6_forward(self, layer: torch.nn.ReLU6, layer_idx: int):
+        case1_map = (self.upper_bound <= 0).float()  # same as relu case 1
+        case2_map = (self.lower_bound >= 6).float() # same as relu case 1 but with 6
+        case3_map = (self.lower_bound >= 0).float() * (self.upper_bound < 6).float() # same as relu case 2
+        case4_map = (self.lower_bound < 0).float() * (self.upper_bound <= 6).float() * (self.upper_bound > 0).float() # same as relu case 3 - crossing relu (need alphas) 
+        case5_map = (self.upper_bound >= 6).float() * (self.lower_bound < 6).float() * (self.lower_bound >= 0).float() # similar to relu case 3 - crossing relu
+        case6_map = (self.lower_bound < 0).float() * (self.upper_bound > 6).float() # new case with two crossings. need alpha and beta
+
+        assert (case1_map + case2_map + case3_map + case4_map + case5_map + case6_map == 1).all()
+
+        # Case 1
+        lower_bound_new = case1_map * torch.zeros_like(self.lower_bound)
+        upper_bound_new = case1_map * torch.zeros_like(self.upper_bound)
+
+        low_relational_new = torch.zeros((self.low_relational[-1].shape[0], self.low_relational[-1].shape[0]))
+        up_relational_new = low_relational_new.clone()
+
+        # Case 2
+        lower_bound_new += case2_map * torch.ones_like(self.lower_bound) * 6
+        upper_bound_new += case2_map * torch.ones_like(self.upper_bound) * 6
+
+        low_append = case2_map.flatten().view(-1,1) * 6
+        up_append = low_append.clone()
+        # low_relational_new = torch.cat((low_relational_new, append), dim=1)
+        # up_relational_new = low_relational_new.clone()
+
+
+        # Case 3
+        lower_bound_new += case3_map * self.lower_bound
+        upper_bound_new += case3_map * self.upper_bound
+
+        low_relational_new += case3_map.flatten().view(1,-1) * torch.eye(self.low_relational[-1].shape[0])
+        # low_relational_new = torch.cat((low_relational_new, torch.zeros(self.low_relational[-1].shape[0], 1)), dim=1)
+        up_relational_new = low_relational_new.clone()
+
+        # Case 4
+        lower_bound_new += case4_map * torch.zeros_like(self.lower_bound)  # Lower bound = 0
+        upper_bound_new += case4_map * self.upper_bound  # Upper bound = u_i
+        
+        # Compute slopes (λ) for relational bounds
+        slopes = self.upper_bound / (self.upper_bound - self.lower_bound + 1e-8)
+        slopes = torch.where(torch.isnan(slopes), torch.zeros_like(slopes), slopes)
+        bias = -slopes * self.lower_bound
+
+        slopes = slopes.flatten().view(1, -1)
+        bias = bias.flatten().view(1, -1)
+
+        # case4_up_relational = torch.cat((slopes * torch.eye(self.low_relational[-1].shape[0]), bias.T), dim=1)
+        case4_up_relational = slopes * torch.eye(self.low_relational[-1].shape[0])
+        up_append += case4_map.flatten().view(-1,1) * bias.T
+
+        up_relational_new += case4_map.view(-1, 1) * case4_up_relational
+
+        if layer_idx not in self.alphas:
+            self.alphas[layer_idx] = torch.nn.Parameter(
+                torch.ones_like(self.lower_bound) * self.alpha_init
+            )
+        alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        # case4_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
+        #                                 torch.zeros_like(bias.T)), dim=1)
+        case4_low_relational = alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
+        
+        low_relational_new += case4_map.view(-1, 1) * case4_low_relational
+
+        #Case 5
+        upper_bound_new += case5_map * torch.ones_like(self.lower_bound) * 6
+        lower_bound_new += case5_map * self.lower_bound
+
+        # Compute slopes (λ) for relational bounds
+        slopes = (torch.ones_like(self.lower_bound) * 6 - self.lower_bound) / (self.upper_bound - self.lower_bound + 1e-8)
+        slopes = torch.where(torch.isnan(slopes), torch.zeros_like(slopes), slopes)
+        bias = (torch.ones_like(slopes) - slopes) * self.lower_bound
+
+        slopes = slopes.flatten().view(1, -1)
+        bias = bias.flatten().view(1, -1)
+
+        # case5_low_relational = torch.cat((slopes * torch.eye(self.low_relational[-1].shape[0]), bias.T), dim=1)
+        case5_low_relational = slopes * torch.eye(self.low_relational[-1].shape[0])
+        low_append += case5_map.flatten().view(-1,1) * bias.T
+        low_relational_new += case5_map.view(-1, 1) * case5_low_relational
+
+        if layer_idx not in self.betas:
+            self.betas[layer_idx] = torch.nn.Parameter(
+                torch.ones_like(self.upper_bound) * self.beta_init
+            )
+        beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        # case5_up_relational = torch.cat((beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
+        #                                 (torch.ones_like(bias.T) * 6) - (beta.view(-1, 1) * 6)), dim=1)
+        case5_up_relational = beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
+        up_append += case5_map.flatten().view(-1,1) * ((torch.ones_like(bias.T) * 6) - (beta.view(-1, 1) * 6))
+
+        up_relational_new += case5_map.view(-1, 1) * case5_up_relational
+
+        # Case 6
+        lower_bound_new += case6_map * torch.zeros_like(self.lower_bound)  # Lower bound = 0
+        upper_bound_new += case6_map * torch.ones_like(self.upper_bound) * 6  # Upper bound = 6
+
+        # calculate the lower relational constraint
+        # y >= (6 \alpha / ux) x 
+        if layer_idx not in self.alphas:
+            self.alphas[layer_idx] = torch.nn.Parameter(
+                torch.ones_like(self.lower_bound) * self.alpha_init
+            )
+        alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        slope = (6 * alpha) / (self.upper_bound + 1e-8)
+        # case6_low_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
+        #                                 torch.zeros_like(bias.T)), dim=1)
+        case6_low_relational = slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
+
+        low_relational_new += case6_map.view(-1, 1) * case6_low_relational
+
+        # calculate the upper relational constraint
+        # y <= (6 \alpha / (6 - lx)) x + (6 - 36 \alpha / (6 - lx))
+        if layer_idx not in self.betas:
+            self.betas[layer_idx] = torch.nn.Parameter(
+                torch.ones_like(self.upper_bound) * self.beta_init
+            )
+        beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        slope = (6 * beta) / (6 - self.lower_bound + 1e-8)
+        bias = (6 - 36 * beta) / (6 - self.lower_bound + 1e-8)
+        # case6_up_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
+        #                                 bias.view(-1, 1)), dim=1)
+        case6_up_relational = slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
+        up_append += case6_map.view(-1,1) * bias.view(-1, 1)
+
+        up_relational_new += case6_map.view(-1, 1) * case6_up_relational
+
+        low_relational_new = torch.cat((low_relational_new, low_append), dim=1)
+        up_relational_new = torch.cat((up_relational_new, up_append), dim=1)
+
+        self.lower_bound = lower_bound_new
+        self.upper_bound = upper_bound_new
+        self.low_relational.append(low_relational_new)
+        self.up_relational.append(up_relational_new)
+                                        
 
     def _skip_connection_forward(self, layer):
         pass
@@ -235,7 +370,7 @@ class Verifier:
                 self._relu_forward(layer, i)
             
             elif layer.__class__.__name__ == "ReLU6":
-                self._relu6_forward(layer)
+                self._relu6_forward(layer, i)
             
             elif layer.__class__.__name__ == "SkipConnection":
                 self._skip_connection_forward(layer)
@@ -258,7 +393,7 @@ class Verifier:
         logging.debug("--------------------------------\n")
 
     def optimize(self):
-        """Optimize alpha parameters to improve verification precision."""
+        """Optimize alpha and beta parameters to improve verification precision."""
         # Do one forward pass to create the alpha parameters
         self.forward()
         
@@ -267,11 +402,11 @@ class Verifier:
             return True
             
         # Return false if no trainable parameters
-        if len(self.alphas) == 0:
+        if (len(self.alphas) + len(self.betas)) == 0:
             return False
         
-        # Now create optimizer with the created parameters
-        optimizer = torch.optim.RMSprop(self.alphas.values(), lr=self.lr)
+        # Now create optimizer with the created parameters - alphas and betas
+        optimizer = torch.optim.Adam(list(self.alphas.values()) + list(self.betas.values()), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.steps)
 
         for step in range(self.steps):

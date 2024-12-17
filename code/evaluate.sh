@@ -25,13 +25,13 @@ do
         # Run the verifier
         output=$(python code/verifier.py --net ${net} --spec test_cases/${net}/${spec})
         # Check the output and update counters
-        if echo "$output" | grep -q "correct"; then
+        if echo "$output" | grep -q " correct"; then
             total_correct=$((total_correct + 1))
 			total_output=$((total_output + 1))
         fi
 
 		if echo "$output" | grep -q "incorrect"; then
-            incorrect_cases+=("${net}/${spec}")
+            incorrect_cases+=("${net}/${spec}-${output}")
 			total_output=$((total_output + 1))
         fi
     
@@ -54,9 +54,9 @@ script_end_time=$(date +%s)
 script_duration=$((script_end_time - script_start_time))
 
 # Output the final summary
-echo "Total Corrects: ${total_correct}"
-echo "Total Outputs: ${total_output}"
-echo "The entire script took ${script_duration} seconds."
+echo -e "\nTotal Corrects: ${total_correct}"
+echo -e "\nTotal Outputs: ${total_output}"
+echo -e "\nThe entire script took ${script_duration} seconds.\n"
 
 if [ ${#incorrect_cases[@]} -gt 0 ]; then
 	echo "Incorrect cases:"
