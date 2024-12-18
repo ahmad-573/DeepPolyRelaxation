@@ -8,6 +8,29 @@ total_output=0
 
 incorrect_cases=()
 
+prelim=False
+
+# If --prelim is provided, set prelim to True
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		--prelim)
+			prelim=True
+			shift
+			;;
+	esac
+done
+
+echo "Prelim: ${prelim}"
+
+# use preliminary_test_cases in prelim else use test_cases
+if [ $prelim = True ]; then
+	path='preliminary_test_cases'
+else
+	path='test_cases'
+fi
+
+echo "Path: ${path}"
+
 for net in fc_linear fc_base fc_w fc_d fc_dw fc6_base fc6_w fc6_d fc6_dw conv_linear conv_base conv6_base conv_d skip skip_large skip6 skip6_large
 do
     echo "Evaluating network ${net}..."
@@ -15,15 +38,16 @@ do
     # Record the start time for this network
     net_start_time=$(date +%s)
     
-    for spec in `ls preliminary_test_cases/${net}`
+    for spec in `ls ${path}/${net}`
     do
         echo "Evaluating spec ${spec}..."
         
         # Record the start time for this spec
         spec_start_time=$(date +%s)
 
-        # Run the verifier
-        output=$(python code/verifier.py --net ${net} --spec preliminary_test_cases/${net}/${spec})
+        # Run the verifier - use preliminary_test_cases in prelim else use test_cases
+
+        output=$(python code/verifier.py --net ${net} --spec ${path}/${net}/${spec})
         # Check the output and update counters
         if echo "$output" | grep -q " correct"; then
             total_correct=$((total_correct + 1))

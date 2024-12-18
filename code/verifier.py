@@ -3,7 +3,7 @@ import torch
 
 from networks import get_network
 from utils.loading import parse_spec
-from utils.helpers import get_linear_combination_matrix
+from utils.helpers import get_linear_combination_matrix, clamp
 
 DEVICE = "cpu"
 
@@ -159,7 +159,7 @@ class Verifier:
                 )
             # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
             # clamp between 0 and 1 inclusive
-            alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
+            alpha = clamp(self.alphas[layer_idx], 0, 1)
             case3_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]), 
                                             torch.zeros_like(bias.T)), dim=1)
 
@@ -228,7 +228,7 @@ class Verifier:
                 torch.ones_like(self.lower_bound) * self.alpha_init
             )
         # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
-        alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
+        alpha = clamp(self.alphas[layer_idx], 0, 1)
         # case4_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 torch.zeros_like(bias.T)), dim=1)
         case4_low_relational = alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
@@ -257,7 +257,7 @@ class Verifier:
                 torch.ones_like(self.upper_bound) * self.beta_init
             )
         # beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
-        beta = torch.clamp(self.betas[layer_idx], 0, 1)
+        beta = clamp(self.betas[layer_idx], 0, 1)
         # case5_up_relational = torch.cat((beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 (torch.ones_like(bias.T) * 6) - (beta.view(-1, 1) * 6)), dim=1)
         case5_up_relational = beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
@@ -276,7 +276,7 @@ class Verifier:
                 torch.ones_like(self.lower_bound) * self.alpha_init
             )
         # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
-        alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
+        alpha = clamp(self.alphas[layer_idx], 0, 1)
         slope = (6 * alpha) / (self.upper_bound + 1e-8)
         # case6_low_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 torch.zeros_like(bias.T)), dim=1)
@@ -291,7 +291,7 @@ class Verifier:
                 torch.ones_like(self.upper_bound) * self.beta_init
             )
         # beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
-        beta = torch.clamp(self.betas[layer_idx], 0, 1)
+        beta = clamp(self.betas[layer_idx], 0, 1)
         slope = (6 * beta) / (6 - self.lower_bound + 1e-8)
         bias = (6 - 36 * beta) / (6 - self.lower_bound + 1e-8)
         # case6_up_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
@@ -531,7 +531,8 @@ def main():
         true_label, dataset, image, eps = parse_spec(args.spec)
 
         # read ground truth text file
-        gt_path = 'preliminary_test_cases/gt.txt'
+        folder = args.spec.split('/')[0]
+        gt_path = f"{folder}/gt.txt"
         gt = []
         specs = args.spec.split('/')
         with open(gt_path, 'r') as f:
