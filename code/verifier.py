@@ -34,8 +34,8 @@ class Verifier:
         self.betas = {} # slope for upper relational bounds
         
         # Initialize optimizer parameters
-        self.lr = 0.1
-        self.steps = 50
+        self.lr = 0.01
+        self.steps = 30
         self.alpha_init = 0.5
         self.beta_init = 0.5
 
@@ -157,7 +157,9 @@ class Verifier:
                 self.alphas[layer_idx] = torch.nn.Parameter(
                     torch.ones_like(self.lower_bound) * self.alpha_init
                 )
-            alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+            # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+            # clamp between 0 and 1 inclusive
+            alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
             case3_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]), 
                                             torch.zeros_like(bias.T)), dim=1)
 
@@ -225,7 +227,8 @@ class Verifier:
             self.alphas[layer_idx] = torch.nn.Parameter(
                 torch.ones_like(self.lower_bound) * self.alpha_init
             )
-        alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
         # case4_low_relational = torch.cat((alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 torch.zeros_like(bias.T)), dim=1)
         case4_low_relational = alpha.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
@@ -253,7 +256,8 @@ class Verifier:
             self.betas[layer_idx] = torch.nn.Parameter(
                 torch.ones_like(self.upper_bound) * self.beta_init
             )
-        beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        # beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        beta = torch.clamp(self.betas[layer_idx], 0, 1)
         # case5_up_relational = torch.cat((beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 (torch.ones_like(bias.T) * 6) - (beta.view(-1, 1) * 6)), dim=1)
         case5_up_relational = beta.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
@@ -271,7 +275,8 @@ class Verifier:
             self.alphas[layer_idx] = torch.nn.Parameter(
                 torch.ones_like(self.lower_bound) * self.alpha_init
             )
-        alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        # alpha = torch.sigmoid(self.alphas[layer_idx])  # Ensure alpha is between 0 and 1
+        alpha = torch.clamp(self.alphas[layer_idx], 0, 1)
         slope = (6 * alpha) / (self.upper_bound + 1e-8)
         # case6_low_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 torch.zeros_like(bias.T)), dim=1)
@@ -285,7 +290,8 @@ class Verifier:
             self.betas[layer_idx] = torch.nn.Parameter(
                 torch.ones_like(self.upper_bound) * self.beta_init
             )
-        beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        # beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
+        beta = torch.clamp(self.betas[layer_idx], 0, 1)
         slope = (6 * beta) / (6 - self.lower_bound + 1e-8)
         bias = (6 - 36 * beta) / (6 - self.lower_bound + 1e-8)
         # case6_up_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
@@ -406,8 +412,9 @@ class Verifier:
             return False
         
         # Now create optimizer with the created parameters - alphas and betas
-        optimizer = torch.optim.Adam(list(self.alphas.values()) + list(self.betas.values()), lr=self.lr)
+        optimizer = torch.optim.RMSprop(list(self.alphas.values()) + list(self.betas.values()), lr=self.lr, alpha=0.999)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.steps)
+
 
         for step in range(self.steps):
             optimizer.zero_grad()

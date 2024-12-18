@@ -96,6 +96,9 @@ def get_linear_combination_matrix(input_tensor, conv_layer):
 
     return linear_comb_matrix
 
+def clamp(input, min, max):
+    return torch.clamp(input, min, max)
+
 if __name__ == "__main__":
     # x = torch.tensor([[[1, 2, 3],
     #                 [4, 5, 6],
