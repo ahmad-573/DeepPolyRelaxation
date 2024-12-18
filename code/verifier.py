@@ -115,7 +115,7 @@ class Verifier:
         self.up_relational.append(linear_comb_matrix)
 
 
-    def _relu_forward(self, layer: torch.nn.ReLU, layer_idx: int):
+    def _relu_forward(self, layer: torch.nn.ReLU, layer_idx):
         case1_map = (self.upper_bound <= 0).float() # Case 1: upper bound ≤ 0 -> output = 0
         case2_map = (self.lower_bound >= 0).float() # Case 2: lower bound ≥ 0 -> output = input
         case3_map = 1 - case1_map - case2_map        # Case 3: crosses 0 -> need special handling
@@ -170,7 +170,7 @@ class Verifier:
         self.low_relational.append(low_relational_new)
         self.up_relational.append(up_relational_new)
 
-    def _relu6_forward(self, layer: torch.nn.ReLU6, layer_idx: int):
+    def _relu6_forward(self, layer: torch.nn.ReLU6, layer_idx):
         case1_map = (self.upper_bound <= 0).float()  # same as relu case 1
         case2_map = (self.lower_bound >= 6).float() # same as relu case 1 but with 6
         case3_map = (self.lower_bound >= 0).float() * (self.upper_bound < 6).float() # same as relu case 2
@@ -310,13 +310,57 @@ class Verifier:
         self.up_relational.append(up_relational_new)
                                         
 
-    def _skip_connection_forward(self, layer):
-        pass
+    def _skip_connection_forward(self, layer, layer_idx, total_layers):
+        curr_lower_bound = self.lower_bound.clone()
+        curr_upper_bound = self.upper_bound.clone()
+
+        curr_low = len(self.low_relational)
+        curr_up = len(self.up_relational)
+        
+        for i, sub_layer in enumerate(layer.path):
+            if sub_layer.__class__.__name__ == "Linear":
+                self.lower_bound = self.lower_bound.flatten().view(1, -1)
+                self.upper_bound = self.upper_bound.flatten().view(1, -1)
+                self._linear_forward(sub_layer)
+            
+            if sub_layer.__class__.__name__ == "ReLU":
+                self._relu_forward(sub_layer, (layer_idx, i))
+                # self._relu_forward(sub_layer, 10000)
+            
+            elif sub_layer.__class__.__name__ == "ReLU6":
+                self._relu6_forward(sub_layer, (layer_idx, i))
+                # self._relu6_forward(sub_layer, 1000000)
+
+        self.lower_bound = curr_lower_bound + self.lower_bound  
+        self.upper_bound = curr_upper_bound + self.upper_bound
+
+        low, up = self._back_substitute(num_layers=len(layer.path))
+        # # low, up = self.low_relational[-1], self.up_relational[-1]
+
+        # # remove the last num_layers relational constraints
+        self.low_relational = self.low_relational[:-len(layer.path)]
+        self.up_relational = self.up_relational[:-len(layer.path)]
+
+        identity = torch.eye(low.shape[0])
+        identity = torch.cat((identity, torch.zeros(low.shape[0], 1)), dim=1)
+        self.low_relational.append(low + identity)
+        self.up_relational.append(up + identity)
+
+        assert len(self.low_relational) == (curr_low + 1) and len(self.up_relational) == (curr_up + 1)
+        
+
     
-    def _back_substitute(self):
+    def _back_substitute(self, num_layers=-1):
         curr_lower = self.low_relational[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
         curr_upper = self.up_relational[-1]
-        for i in range(len(self.low_relational)-2, -1, -1):
+
+        if num_layers == -1:
+            limit = -1
+        
+        else:
+            limit = len(self.low_relational) - num_layers - 1
+
+        for i in range(len(self.low_relational)-2, -1, limit):
             
             prev_lower = self.low_relational[i] # shape: (L-1_layer_out_dim, L-1_layer_in_dim + 1)
             prev_upper = self.up_relational[i]
@@ -341,11 +385,16 @@ class Verifier:
 
         shape = self.lower_bound.shape
 
+        if num_layers != -1:
+            return curr_lower, curr_upper
+
         self.lower_bound = torch.maximum(self.lower_bound.flatten().view(1,-1), curr_lower.T)
         self.upper_bound = torch.minimum(self.upper_bound.flatten().view(1,-1), curr_upper.T)
 
         self.lower_bound = self.lower_bound.view(shape)
         self.upper_bound = self.upper_bound.view(shape)
+
+        # return curr_lower, curr_upper
     
     def check(self):
         # Since the verification layer computes y_true - y_other,
@@ -360,8 +409,10 @@ class Verifier:
         self.low_relational = [self.lower_bound.flatten().view(1, -1).clone().T]
         self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
 
+        total_layers = len(self.net) + 1
+
         for i, layer in enumerate(self.net):
-            logging.info(f"------- Layer {i}: {layer.__class__.__name__} -------")
+            logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
@@ -378,8 +429,8 @@ class Verifier:
             elif layer.__class__.__name__ == "ReLU6":
                 self._relu6_forward(layer, i)
             
-            elif layer.__class__.__name__ == "SkipConnection":
-                self._skip_connection_forward(layer)
+            elif layer.__class__.__name__ == "SkipBlock":
+                self._skip_connection_forward(layer, i, total_layers)
             
             logging.debug(f"Lower bound: {self.lower_bound}")
             logging.debug(f"Upper bound: {self.upper_bound}")
@@ -406,10 +457,12 @@ class Verifier:
         # Check if we already succeeded
         if self.check():
             return True
+        
             
-        # Return false if no trainable parameters
+        # # Return false if no trainable parameters
         if (len(self.alphas) + len(self.betas)) == 0:
             return False
+        
         
         # Now create optimizer with the created parameters - alphas and betas
         optimizer = torch.optim.RMSprop(list(self.alphas.values()) + list(self.betas.values()), lr=self.lr, alpha=0.999)
@@ -430,6 +483,11 @@ class Verifier:
                 
             # Loss is negative of minimum output (we want to maximize it)
             loss = -min_output
+
+            # print(loss.requires_grad)
+            if not loss.requires_grad:
+                break
+                
             loss.backward()
             
             optimizer.step()

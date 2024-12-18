@@ -99,6 +99,31 @@ def get_linear_combination_matrix(input_tensor, conv_layer):
 def clamp(x, min_val, max_val):
     return torch.clamp(x, min_val, max_val)
 
+def pseudo_back_sub(low_list, up_list):
+    curr_lower = low_list[-1] # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+    curr_upper = up_list[-1]
+
+    for i in range(len(low_list) - 2, -1, -1):
+        prev_lower = low_list[i]
+        prev_upper = up_list[i]
+
+        lower_positive = torch.maximum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+        lower_negative = torch.minimum(curr_lower, torch.zeros_like(curr_lower)) # shape: (L_layer_out_dim, L_layer_in_dim + 1)
+
+        upper_positive = torch.maximum(curr_upper, torch.zeros_like(curr_upper))
+        upper_negative = torch.minimum(curr_upper, torch.zeros_like(curr_upper))
+
+        # append a 0s row with last entry 1 to the prev_lower and prev_upper
+        append_this = torch.zeros(1, prev_lower.shape[1])
+        append_this[0][-1] = 1
+        prev_lower_append = torch.cat((prev_lower, append_this), dim=0)
+        prev_upper_append = torch.cat((prev_upper, append_this), dim=0)
+
+        curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
+        curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
+    
+    return curr_lower, curr_upper
+
 if __name__ == "__main__":
     # x = torch.tensor([[[1, 2, 3],
     #                 [4, 5, 6],
