@@ -293,7 +293,7 @@ class Verifier:
         # beta = torch.sigmoid(self.betas[layer_idx])  # Ensure beta is between 0 and 1
         beta = clamp(self.betas[layer_idx], 0, 1)
         slope = (6 * beta) / (6 - self.lower_bound + 1e-8)
-        bias = (6 - 36 * beta) / (6 - self.lower_bound + 1e-8)
+        bias = 6 - (36 * beta) / (6 - self.lower_bound + 1e-8)
         # case6_up_relational = torch.cat((slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0]),
         #                                 bias.view(-1, 1)), dim=1)
         case6_up_relational = slope.view(-1, 1) * torch.eye(self.low_relational[-1].shape[0])
@@ -361,7 +361,7 @@ class Verifier:
         self.up_relational = [self.upper_bound.flatten().view(1, -1).clone().T]
 
         for i, layer in enumerate(self.net):
-            logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
+            logging.info(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
