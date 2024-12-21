@@ -15,4 +15,6 @@ done
 
 # Run python script with the appropriate test value
 python code/verifier.py --net skip --spec test_cases/skip/img_mnist_0.078863.txt --test $test_value
-# python code/verifier.py --net fc_w --spec test_cases/fc_w/img_mnist_0.110494.txt --test $test_value
+# python code/verifier.py --net skip --spec preliminary_test_cases/skip/img0_mnist_0.023631.txt --test $test_value
+
+

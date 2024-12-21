@@ -29,6 +29,10 @@ class Verifier:
         # Add verification layer
         self.verification_layer = self._get_output_layer(num_class, true_label) 
 
+        # for skip blocks
+        self.skip_starts = []
+        self.skip_ends = []
+
         # Initialize trainable alphas
         self.alphas = {} # slope for lower relational bounds
         self.betas = {} # slope for upper relational bounds
@@ -173,11 +177,12 @@ class Verifier:
     def _relu6_forward(self, layer: torch.nn.ReLU6, layer_idx):
         case1_map = (self.upper_bound <= 0).float()  # same as relu case 1
         case2_map = (self.lower_bound >= 6).float() # same as relu case 1 but with 6
-        case3_map = (self.lower_bound >= 0).float() * (self.upper_bound < 6).float() # same as relu case 2
+        case3_map = (self.lower_bound >= 0).float() * (self.upper_bound < 6).float() * (self.upper_bound > 0).float() # same as relu case 2
         case4_map = (self.lower_bound < 0).float() * (self.upper_bound <= 6).float() * (self.upper_bound > 0).float() # same as relu case 3 - crossing relu (need alphas) 
         case5_map = (self.upper_bound >= 6).float() * (self.lower_bound < 6).float() * (self.lower_bound >= 0).float() # similar to relu case 3 - crossing relu
         case6_map = (self.lower_bound < 0).float() * (self.upper_bound > 6).float() # new case with two crossings. need alpha and beta
 
+        # print(case1_map + case2_map + case3_map + case4_map + case5_map + case6_map)
         assert (case1_map + case2_map + case3_map + case4_map + case5_map + case6_map == 1).all()
 
         # Case 1
@@ -314,39 +319,46 @@ class Verifier:
         curr_lower_bound = self.lower_bound.clone()
         curr_upper_bound = self.upper_bound.clone()
 
-        curr_low = len(self.low_relational)
-        curr_up = len(self.up_relational)
+        self.skip_starts.append(len(self.low_relational))
         
         for i, sub_layer in enumerate(layer.path):
+            # print(sub_layer.__class__.__name__, i)
             if sub_layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
                 self._linear_forward(sub_layer)
+                if i == len(layer.path) - 1:
+                    self.skip_ends.append(len(self.low_relational))
+                self._back_substitute()
             
             if sub_layer.__class__.__name__ == "ReLU":
                 self._relu_forward(sub_layer, (layer_idx, i))
+                # self._back_substitute()
                 # self._relu_forward(sub_layer, 10000)
             
             elif sub_layer.__class__.__name__ == "ReLU6":
                 self._relu6_forward(sub_layer, (layer_idx, i))
+                # self._back_substitute()
                 # self._relu6_forward(sub_layer, 1000000)
+
+        # self.skip_ends.append(len(self.low_relational) - 1)
 
         self.lower_bound = curr_lower_bound + self.lower_bound  
         self.upper_bound = curr_upper_bound + self.upper_bound
 
-        low, up = self._back_substitute(num_layers=len(layer.path))
+        # self._back_substitute()
         # # low, up = self.low_relational[-1], self.up_relational[-1]
 
         # # remove the last num_layers relational constraints
-        self.low_relational = self.low_relational[:-len(layer.path)]
-        self.up_relational = self.up_relational[:-len(layer.path)]
+        # self.low_relational = self.low_relational[:-len(layer.path)]
+        # self.up_relational = self.up_relational[:-len(layer.path)]
 
-        identity = torch.eye(low.shape[0])
-        identity = torch.cat((identity, torch.zeros(low.shape[0], 1)), dim=1)
-        self.low_relational.append(low + identity)
-        self.up_relational.append(up + identity)
+        # identity = torch.eye(low.shape[0])
+        # identity = torch.cat((identity, torch.zeros(low.shape[0], 1)), dim=1)
+        # self.low_relational.append(low + identity)
+        # self.up_relational.append(up + identity)
 
-        assert len(self.low_relational) == (curr_low + 1) and len(self.up_relational) == (curr_up + 1)
+        # assert len(self.low_relational) == (curr_low + 1) and len(self.up_relational) == (curr_up + 1)
         
 
     
@@ -360,8 +372,42 @@ class Verifier:
         else:
             limit = len(self.low_relational) - num_layers - 1
 
-        for i in range(len(self.low_relational)-2, -1, limit):
+        add_low = None
+        add_up = None
+
+        starts = self.skip_starts.copy()
+        ends = self.skip_ends.copy()
+
+        # print(len(self.low_relational) - 1, starts, ends)
+
+        if len(self.low_relational) in ends:
+            # add_low = torch.eye(curr_lower.shape[0])
+            # add_up = torch.eye(curr_upper.shape[0])
+
+            # add_low = torch.cat((add_low, torch.zeros(add_low.shape[0], 1)), dim=1)
+            # add_up = torch.cat((add_up, torch.zeros(add_up.shape[0], 1)), dim=1)
+            add_low = 0
+            add_up = 0
+
+        if len(self.low_relational) - 1  in ends:
+            add_low = curr_lower.clone()
+            add_up = curr_upper.clone()
+            # make last column 0
+            add_low = torch.cat((add_low[:, :-1], torch.zeros(add_low.shape[0], 1)), dim=1)
+            add_up = torch.cat((add_up[:, :-1], torch.zeros(add_up.shape[0], 1)), dim=1)
             
+
+        # print(self.skip_starts, self.skip_ends)
+
+        # for i in range(len(self.low_relational)-2, -1, limit):
+        i = len(self.low_relational) - 2
+        while i > limit:
+            # print(i, starts, ends)
+            if len(starts) != len(ends):
+                # remove last element of starts
+                starts.pop() 
+                assert len(starts) == len(ends)
+                continue
             prev_lower = self.low_relational[i] # shape: (L-1_layer_out_dim, L-1_layer_in_dim + 1)
             prev_upper = self.up_relational[i]
 
@@ -380,13 +426,28 @@ class Verifier:
             prev_upper_append = torch.cat((prev_upper, append_this), dim=0)
 
             curr_lower = lower_positive @ prev_lower_append + lower_negative @ prev_upper_append
-            curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append
+            curr_upper = upper_positive @ prev_upper_append + upper_negative @ prev_lower_append   
+
+            if i in starts:
+                curr_lower += add_low
+                curr_upper += add_up
+
+            if i in ends:
+                add_low = curr_lower.clone()
+                add_up = curr_upper.clone()
+                # make last column 0
+                add_low = torch.cat((add_low[:, :-1], torch.zeros(add_low.shape[0], 1)), dim=1)
+                add_up = torch.cat((add_up[:, :-1], torch.zeros(add_up.shape[0], 1)), dim=1)
+            
+            i -= 1
 
 
         shape = self.lower_bound.shape
 
         if num_layers != -1:
             return curr_lower, curr_upper
+        
+        # assert (self.lower_bound <= self.upper_bound).all()
 
         self.lower_bound = torch.maximum(self.lower_bound.flatten().view(1,-1), curr_lower.T)
         self.upper_bound = torch.minimum(self.upper_bound.flatten().view(1,-1), curr_upper.T)
@@ -402,6 +463,8 @@ class Verifier:
         return (self.lower_bound > 0).all()
     
     def forward(self):
+        self.skip_starts = []
+        self.skip_ends = []
         # Reset bounds and relational constraints at the start of each forward pass
         self.lower_bound = torch.maximum(self.inputs - self.eps, torch.zeros_like(self.inputs))
         self.upper_bound = torch.minimum(self.inputs + self.eps, torch.ones_like(self.inputs))
@@ -412,6 +475,8 @@ class Verifier:
         total_layers = len(self.net) + 1
 
         for i, layer in enumerate(self.net):
+            # check if lower bound < upper bound
+            assert (self.lower_bound <= self.upper_bound).all()
             logging.debug(f"------- Layer {i}: {layer.__class__.__name__} -------")
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
@@ -453,16 +518,19 @@ class Verifier:
         """Optimize alpha and beta parameters to improve verification precision."""
         # Do one forward pass to create the alpha parameters
         self.forward()
+
+        # print(self.lower_bound.min())
         
         # Check if we already succeeded
         if self.check():
             return True
+    
+        # return self.check()
         
             
         # # Return false if no trainable parameters
         if (len(self.alphas) + len(self.betas)) == 0:
             return False
-        
         
         # Now create optimizer with the created parameters - alphas and betas
         optimizer = torch.optim.RMSprop(list(self.alphas.values()) + list(self.betas.values()), lr=self.lr, alpha=0.999)
@@ -485,8 +553,9 @@ class Verifier:
             loss = -min_output
 
             # print(loss.requires_grad)
-            if not loss.requires_grad:
-                break
+            # if not loss.requires_grad:
+            #     break
+            # print(min_output)
                 
             loss.backward()
             
