@@ -554,7 +554,10 @@ def main():
         logging.debug(f"testing: {specs}")
         logging.debug(f"Found ground truth: {gt}")
 
-        is_verified = gt[0][2] == "verified"
+        # is_verified = gt[0][2] == "verified"
+        is_verified = 0
+        if gt[0][2] == "verified":
+            is_verified = 1
 
         if dataset == "mnist":
             in_ch, in_dim, num_class = 1, 28, 10
