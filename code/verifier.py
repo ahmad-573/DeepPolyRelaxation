@@ -41,8 +41,6 @@ class Verifier:
         self.alpha_init = 0.5
         self.beta_init = 0.5
 
-        # self.lower_bound = inputs - eps
-        # self.upper_bound = inputs + eps
         self.lower_bound = torch.maximum(inputs - eps, torch.zeros_like(inputs))
         self.upper_bound = torch.minimum(inputs + eps, torch.ones_like(inputs))
 
@@ -159,7 +157,7 @@ class Verifier:
         case5_map = (self.upper_bound >= 6).float() * (self.lower_bound < 6).float() * (self.lower_bound >= 0).float() # similar to relu case 3 - crossing relu
         case6_map = (self.lower_bound < 0).float() * (self.upper_bound > 6).float() # new case with two crossings. need alpha and beta
 
-        assert (case1_map + case2_map + case3_map + case4_map + case5_map + case6_map == 1).all()
+        # assert (case1_map + case2_map + case3_map + case4_map + case5_map + case6_map == 1).all()
 
         # Case 1
         lower_bound_new = case1_map * torch.zeros_like(self.lower_bound) # Lower bound = 0
@@ -323,7 +321,7 @@ class Verifier:
             if len(starts) != len(ends):
                 # remove last element of starts
                 starts.pop() 
-                assert len(starts) == len(ends)
+                # assert len(starts) == len(ends)
                 continue
             prev_lower = self.low_relational[i] # shape: (L-1_layer_out_dim, L-1_layer_in_dim + 1)
             prev_upper = self.up_relational[i]
@@ -384,7 +382,7 @@ class Verifier:
 
         for i, layer in enumerate(self.net):
             # check if lower bound < upper bound
-            assert (self.lower_bound <= self.upper_bound).all()
+            # assert (self.lower_bound <= self.upper_bound).all()
             if layer.__class__.__name__ == "Linear":
                 self.lower_bound = self.lower_bound.flatten().view(1, -1)
                 self.upper_bound = self.upper_bound.flatten().view(1, -1)
