@@ -497,101 +497,38 @@ def main():
         help="Neural network architecture which is supposed to be verified.",
     )
     parser.add_argument("--spec", type=str, required=True, help="Test case to verify.")
-    parser.add_argument("--test", type=int, required=False, help="simple: 0 or complex: 1")
     args = parser.parse_args()
 
-    if args.test == 0:  # simple test for sanity checks
-        # print("JERE")
-        net = torch.nn.Sequential(
-            torch.nn.Linear(2, 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(2, 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(2, 2),
-        )
-        
-        # Initialize weights according to the diagram in Lecture4 example
-        net[0].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
-                                                        [1.0, -1.0]]))
-        net[0].bias = torch.nn.Parameter(torch.tensor([0.0, 0.0]))
-        
-        net[2].weight = torch.nn.Parameter(torch.tensor([[1.0, 1.0], 
-                                                        [1.0, -1.0]]))
-        net[2].bias = torch.nn.Parameter(torch.tensor([-0.5, 0.0]))
-        
-        net[4].weight = torch.nn.Parameter(torch.tensor([[-1.0, 1.0], 
-                                                        [0.0, 1.0]]))
-        net[4].bias = torch.nn.Parameter(torch.tensor([3.0, 0.0]))
-        
-        eps = 1
-        true_label = 0
-        num_class = 2
+    true_label, dataset, image, eps = parse_spec(args.spec)
 
-        image = torch.zeros(1, 2)  # Initial input point at origin
-        out = net(image)
+    # print(args.spec)
 
-        is_verified = True
-
-        logging.info("Running simple test case")
-
+    if dataset == "mnist":
+        in_ch, in_dim, num_class = 1, 28, 10
+    elif dataset == "cifar10":
+        in_ch, in_dim, num_class = 3, 32, 10
     else:
-        true_label, dataset, image, eps = parse_spec(args.spec)
+        raise ValueError(f"Unknown dataset: {dataset}")
 
-        # read ground truth text file
-        folder = args.spec.split('/')[0]
-        gt_path = f"{folder}/gt.txt"
-        gt = []
-        specs = args.spec.split('/')
-        with open(gt_path, 'r') as f:
-            lines = f.readlines()
-            for line in lines:
-                curr_specs = line.strip().split(',')
-                if curr_specs[0] == specs[1] and curr_specs[1] == specs[2]:
-                    gt.append(curr_specs)
-        
-        logging.debug(f"testing: {specs}")
-        logging.debug(f"Found ground truth: {gt}")
+    net = get_network(
+        args.net,
+        in_ch=in_ch,
+        in_dim=in_dim,
+        num_class=num_class,
+        weight_path=f"models/{dataset}_{args.net}.pt",
+    ).to(DEVICE)
 
-        # is_verified = gt[0][2] == "verified"
-        is_verified = 0
-        if gt[0][2] == "verified":
-            is_verified = 1
-
-        if dataset == "mnist":
-            in_ch, in_dim, num_class = 1, 28, 10
-        elif dataset == "cifar10":
-            in_ch, in_dim, num_class = 3, 32, 10
-        else:
-            raise ValueError(f"Unknown dataset: {dataset}")
-
-        net = get_network(
-            args.net,
-            in_ch=in_ch,
-            in_dim=in_dim,
-            num_class=num_class,
-            weight_path=f"models/{dataset}_{args.net}.pt",
-        ).to(DEVICE)
-
-        image = image.to(DEVICE)
-        out = net(image.unsqueeze(0))
+    image = image.to(DEVICE)
+    out = net(image.unsqueeze(0))
 
     pred_label = out.max(dim=1)[1].item()
-    
-    if not pred_label == true_label:
-        logging.error(f"Predicted label: {pred_label}")
-        logging.error(f"True label: {true_label}")
-        # assert pred_label == true_label
+    assert pred_label == true_label
 
     if analyze(net, image, eps, true_label, num_class):
-        if is_verified:
-            print("verified - correct")
-        else:
-            print("verified - incorrect")
+        print("verified")
     else:
-        if not is_verified:
-            print("not verified - correct")
-        else:
-            print("not verified - incorrect")
+        print("not verified")
+
 
 if __name__ == "__main__":
     main()
