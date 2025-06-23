@@ -1,9 +1,7 @@
-# RIAI 2024 Course Project
-
-## Setup instructions
+## Setup
 
 We recommend you install a [Python virtual environment](https://docs.python.org/3/library/venv.html) to ensure dependencies are the same as the ones we will use for evaluation.
-To evaluate your solution, we are going to use Python 3.10.
+To evaluate the verifier, use Python 3.10.
 You can create a virtual environment and install the dependencies using the following commands:
 
 ```bash
@@ -12,7 +10,7 @@ $ source venv/bin/activate
 $ pip install -r requirements.txt
 ```
 
-If you prefer conda environments we also provide a conda `environment.yaml` file which you can install (After installing [conda](https://docs.conda.io/projects/conda/en/latest/commands/install.html) or [mamba](https://mamba.readthedocs.io/en/latest/installation.html)) via
+For conda environments there is a conda `environment.yaml` file which you can install (After installing [conda](https://docs.conda.io/projects/conda/en/latest/commands/install.html) or [mamba](https://mamba.readthedocs.io/en/latest/installation.html)) via
 
 ```bash
 $ conda env create -f ./environment.yaml
