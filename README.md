@@ -1,6 +1,6 @@
 ## Setup
 
-We recommend you install a [Python virtual environment](https://docs.python.org/3/library/venv.html) to ensure dependencies are the same as the ones we will use for evaluation.
+Install a [Python virtual environment](https://docs.python.org/3/library/venv.html) to ensure dependencies are the same as the ones we will use for evaluation.
 To evaluate the verifier, use Python 3.10.
 You can create a virtual environment and install the dependencies using the following commands:
 
